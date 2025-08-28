@@ -1,0 +1,9 @@
+config:
+  aws:region: us-west-2
+  projectName: pulumi-aws-demo
+  environment: dev
+  bucketName: pulumi-aws-demo-bucket
+  tags:
+    Environment: dev
+    Project: pulumi-aws-demo
+    ManagedBy: pulumi-kubernetes-operator

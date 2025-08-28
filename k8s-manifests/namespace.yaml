@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pulumi-aws-demo
+  labels:
+    name: pulumi-aws-demo
+    purpose: demo-workloads

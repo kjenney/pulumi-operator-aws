@@ -1,0 +1,49 @@
+apiVersion: pulumi.com/v1
+kind: Stack
+metadata:
+  name: aws-resources
+  namespace: pulumi-kubernetes-operator
+spec:
+  # The stack name in format: organization/project/stack
+  stack: "aws-resources"
+  
+  # Service account for the workspace pod
+  serviceAccountName: "pulumi"
+  
+  # Git repository containing the Pulumi program
+  projectRepo: "https://github.com/pulumi/examples.git"
+  repoDir: "aws-ts-s3-folder"
+  branch: "master"
+  
+  # Environment variables for AWS and Pulumi Cloud
+  envRefs:
+    AWS_ACCESS_KEY_ID:
+      type: Secret
+      secret:
+        name: aws-credentials
+        key: AWS_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY:
+      type: Secret
+      secret:
+        name: aws-credentials
+        key: AWS_SECRET_ACCESS_KEY
+    AWS_REGION:
+      type: Secret
+      secret:
+        name: aws-credentials
+        key: AWS_REGION
+    PULUMI_ACCESS_TOKEN:
+      type: Secret
+      secret:
+        name: pulumi-access-token
+        key: accessToken
+  
+  # Configuration for the Pulumi program
+  config:
+    aws:region: us-west-2
+  
+  # Clean up AWS resources when the Stack is deleted
+  destroyOnFinalize: true
+  
+  # Refresh the stack every 60 seconds to check for changes
+  resyncFrequencySeconds: 60
