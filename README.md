@@ -142,7 +142,6 @@ STACK_NAMESPACE=team-a-stacks ./scripts/deploy-stack.sh
 
 Customize the deployment by modifying:
 - **Helm Chart**: Edit `helm-chart/values.yaml` for Helm deployments
-- **Manual**: Edit `pulumi-program/Pulumi.dev.yaml` and `k8s-manifests/` files
 
 ## 📊 Monitoring and Troubleshooting
 
@@ -170,7 +169,7 @@ See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for detailed troubleshooting guid
 helm uninstall pulumi-aws-demo -n pulumi-aws-demo
 ```
 
-### Manual Deployment Cleanup
+### Cleanup the rest
 ```bash
 # Use the cleanup script
 ./scripts/cleanup.sh
