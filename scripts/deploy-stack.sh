@@ -270,39 +270,107 @@ wait_for_stack() {
     local interval=15
     local elapsed=0
     
-    while [[ $elapsed -lt $timeout ]]; do
-        local status
-        status=$(kubectl get stack ${STACK_NAME} -n ${NAMESPACE} -o jsonpath='{.status.lastUpdate.state}' 2>/dev/null || echo "")
+    # First, let's verify the stack name and namespace are correct
+    log_debug "Looking for stack '$STACK_NAME' in namespace '$NAMESPACE'"
+    
+    # Check if we can find the stack in the expected namespace
+    if ! kubectl get stack ${STACK_NAME} -n ${NAMESPACE} >/dev/null 2>&1; then
+        log_warning "Stack '${STACK_NAME}' not found in namespace '${NAMESPACE}'"
+        log_info "Searching for stacks in all namespaces..."
         
-        case "$status" in
-            "succeeded")
+        # Look for any stacks that might match
+        local all_stacks
+        all_stacks=$(kubectl get stacks --all-namespaces --no-headers 2>/dev/null || echo "")
+        
+        if [[ -n "$all_stacks" ]]; then
+            log_info "Found the following stacks:"
+            echo "$all_stacks"
+            
+            # Try to find a stack with the expected name in any namespace
+            local found_namespace
+            found_namespace=$(echo "$all_stacks" | grep "$STACK_NAME" | awk '{print $1}' | head -1)
+            
+            if [[ -n "$found_namespace" ]]; then
+                log_info "Found stack '${STACK_NAME}' in namespace '${found_namespace}', updating namespace"
+                NAMESPACE="$found_namespace"
+            else
+                # Look for any stack that might be ours (aws-resources, dev, etc.)
+                local possible_stack
+                possible_stack=$(echo "$all_stacks" | grep -E "(aws-resources|dev|${PROJECT_NAME:-})" | head -1)
+                
+                if [[ -n "$possible_stack" ]]; then
+                    local found_stack_name found_stack_namespace
+                    found_stack_namespace=$(echo "$possible_stack" | awk '{print $1}')
+                    found_stack_name=$(echo "$possible_stack" | awk '{print $2}')
+                    
+                    log_warning "Stack '${STACK_NAME}' not found, but found '${found_stack_name}' in '${found_stack_namespace}'"
+                    log_info "Updating to use found stack: ${found_stack_name} in ${found_stack_namespace}"
+                    STACK_NAME="$found_stack_name"
+                    NAMESPACE="$found_stack_namespace"
+                else
+                    log_error "No matching stacks found. Available stacks:"
+                    echo "$all_stacks"
+                    return 1
+                fi
+            fi
+        else
+            log_error "No stacks found in any namespace"
+            return 1
+        fi
+    fi
+    
+    log_info "Monitoring stack '${STACK_NAME}' in namespace '${NAMESPACE}'"
+    
+    while [[ $elapsed -lt $timeout ]]; do
+        # Check if stack exists (should exist now after the above logic)
+        if ! kubectl get stack ${STACK_NAME} -n ${NAMESPACE} >/dev/null 2>&1; then
+            log_info "Waiting for stack to be created... (${elapsed}s elapsed)"
+            sleep $interval
+            elapsed=$((elapsed + interval))
+            continue
+        fi
+        
+        # Check the Ready condition in the status.conditions array
+        local ready_condition
+        ready_condition=$(kubectl get stack ${STACK_NAME} -n ${NAMESPACE} -o jsonpath='{.status.conditions[?(@.type=="Ready")]}' 2>/dev/null || echo "")
+        
+        if [[ -n "$ready_condition" ]]; then
+            # Extract the status and message from the Ready condition
+            local ready_status
+            local ready_message
+            ready_status=$(echo "$ready_condition" | jq -r '.status' 2>/dev/null || echo "")
+            ready_message=$(echo "$ready_condition" | jq -r '.message' 2>/dev/null || echo "")
+            
+            log_debug "Ready condition - Status: $ready_status, Message: $ready_message"
+            
+            if [[ "$ready_status" == "True" ]]; then
                 log_success "Pulumi stack deployment succeeded!"
+                log_info "Message: $ready_message"
                 return 0
-                ;;
-            "failed")
+            elif [[ "$ready_status" == "False" ]]; then
                 log_error "Pulumi stack deployment failed!"
+                log_error "Message: $ready_message"
                 kubectl describe stack ${STACK_NAME} -n ${NAMESPACE}
                 echo ""
                 log_info "Stack events:"
                 kubectl get events -n ${NAMESPACE} --field-selector involvedObject.name=${STACK_NAME} --sort-by='.lastTimestamp' 2>/dev/null || true
                 return 1
-                ;;
-            "running"|"updating")
-                log_info "Stack deployment in progress... Status: $status (${elapsed}s elapsed)"
-                ;;
-            "")
-                log_info "Waiting for stack to start... (${elapsed}s elapsed)"
-                ;;
-            *)
-                log_info "Stack status: $status (${elapsed}s elapsed)"
-                ;;
-        esac
+            else
+                log_info "Stack Ready condition status: $ready_status (${elapsed}s elapsed)"
+                if [[ -n "$ready_message" ]]; then
+                    log_info "Message: $ready_message"
+                fi
+            fi
+        else
+            log_info "Waiting for Ready condition to appear... (${elapsed}s elapsed)"
+        fi
         
         sleep $interval
         elapsed=$((elapsed + interval))
     done
     
     log_error "Timeout waiting for stack deployment to complete"
+    kubectl describe stack ${STACK_NAME} -n ${NAMESPACE}
     return 1
 }
 
