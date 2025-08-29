@@ -1,0 +1,37 @@
+1. Your Pulumi AWS deployment has been installed successfully!
+
+2. The following resources have been created:
+   - Namespace: {{ .Values.global.namespace.name }}
+   - ServiceAccount: {{ .Values.serviceAccount.name }}
+   - ClusterRole: {{ .Values.rbac.clusterRole.name }}
+   - Secrets for AWS credentials and Pulumi access token
+   - ConfigMap with Pulumi program: {{ .Values.configMap.name }}
+   - Pulumi Stack: {{ .Values.pulumi.stack.name }}
+
+3. To check the status of your Pulumi stack:
+   kubectl get stack {{ .Values.pulumi.stack.name }} -n {{ .Values.global.namespace.name }}
+
+4. To view the stack logs:
+   kubectl logs -l pulumi.com/stack={{ .Values.pulumi.stack.name }} -n {{ .Values.global.namespace.name }}
+
+5. To see the AWS resources that will be created:
+   - S3 Bucket: {{ .Values.project.bucketName }}
+   - VPC with public subnet
+   - Security groups for web traffic
+   - IAM roles and policies
+
+6. Important: Make sure you have:
+   - AWS credentials configured with appropriate permissions
+   - Pulumi access token set up
+   - The Pulumi Kubernetes Operator installed in your cluster
+
+7. To update the stack configuration, modify the values.yaml and upgrade the Helm release:
+   helm upgrade {{ .Release.Name }} ./helm-chart -n {{ .Release.Namespace }}
+
+8. To delete all AWS resources, delete the Helm release:
+   helm uninstall {{ .Release.Name }} -n {{ .Release.Namespace }}
+   
+   Note: This will trigger destroyOnFinalize and clean up AWS resources automatically.
+
+For troubleshooting, check the operator logs:
+kubectl logs -l app.kubernetes.io/name=pulumi-kubernetes-operator -n pulumi-system

@@ -1,0 +1,114 @@
+# Example values file for Pulumi Operator AWS Helm Chart
+# Copy this file and customize it for your deployment
+
+# Global configuration
+global:
+  # Namespace configuration
+  namespace:
+    name: my-pulumi-aws-demo
+    labels:
+      name: my-pulumi-aws-demo
+      purpose: demo-workloads
+      team: platform
+    create: true
+
+# AWS Configuration
+aws:
+  region: us-east-1  # Change to your preferred region
+  # AWS credentials will be provided via environment variables
+  # and automatically base64 encoded by the deployment script
+  credentials:
+    secretName: aws-credentials
+    # Leave these empty - they will be populated by the deployment script
+    accessKeyId: ""
+    secretAccessKey: ""
+
+# Pulumi Configuration
+pulumi:
+  # Pulumi access token secret
+  accessToken:
+    secretName: pulumi-access-token
+    # Leave this empty - it will be populated by the deployment script
+    token: ""
+  
+  # Pulumi project configuration
+  project:
+    name: aws-resources
+    runtime: nodejs
+    description: Deploy AWS resources using Pulumi Kubernetes Operator
+  
+  # Pulumi stack configuration
+  stack:
+    name: aws-resources
+    environment: production  # Change to match your environment
+    serviceAccountName: pulumi
+    destroyOnFinalize: true
+    resyncFrequencySeconds: 300  # 5 minutes instead of 60 seconds
+    
+    # Git repository configuration (disabled in favor of ConfigMap)
+    git:
+      enabled: false
+      repo: "https://github.com/pulumi/examples.git"
+      repoDir: "aws-ts-s3-folder"
+      branch: "master"
+    
+    # Use ConfigMap for Pulumi program instead of Git
+    useConfigMap: true
+
+# Project Configuration
+project:
+  name: my-production-app
+  environment: production
+  bucketName: my-production-app-prod-bucket-12345  # Make sure this is globally unique
+  tags:
+    Environment: production
+    Project: my-production-app
+    ManagedBy: pulumi-kubernetes-operator
+    Team: platform
+    CostCenter: "CC-12345"
+    Owner: "platform-team@company.com"
+
+# Service Account Configuration
+serviceAccount:
+  create: true
+  name: pulumi
+  annotations:
+    # Add any annotations you need
+    # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/pulumi-role
+
+# RBAC Configuration
+rbac:
+  create: true
+  clusterRole:
+    name: pulumi-stack-manager
+    # Add additional rules if needed
+    additionalRules: []
+
+# Operator namespace (where the operator itself runs)
+operatorNamespace: pulumi-system  # Change if your operator is in a different namespace
+
+# ConfigMap configuration for the Pulumi program
+configMap:
+  name: pulumi-program
+  
+# Dependencies versions - update as needed
+dependencies:
+  pulumi: "^3.100.0"
+  pulumiAws: "^6.15.0"
+  nodeTypes: "^20.10.0"
+  typescript: "^5.3.0"
+
+# Node.js configuration
+nodejs:
+  version: ">=18.0.0"
+
+# TypeScript configuration
+typescript:
+  target: "ES2020"
+  module: "commonjs"
+  lib: ["ES2020"]
+  strict: true
+  esModuleInterop: true
+  skipLibCheck: true
+  forceConsistentCasingInFileNames: true
+  moduleResolution: "node"

@@ -1,0 +1,14 @@
+{{- if .Values.global.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespace.name }}
+  labels:
+    {{- range $key, $value := .Values.global.namespace.labels }}
+    {{ $key }}: {{ $value }}
+    {{- end }}
+    {{- include "pulumi-operator-aws.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-policy": before-hook-creation
+{{- end }}

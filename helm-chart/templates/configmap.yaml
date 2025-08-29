@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configMap.name }}
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- include "pulumi-operator-aws.labels" . | nindent 4 }}
+data:
+  Pulumi.yaml: |
+    name: {{ .Values.pulumi.project.name }}
+    runtime: {{ .Values.pulumi.project.runtime }}
+    description: {{ .Values.pulumi.project.description }}
+
+    template:
+      config:
+        aws:region:
+          description: The AWS region to deploy resources
+          default: {{ .Values.aws.region }}
+        projectName:
+          description: The name of the project
+          default: {{ .Values.project.name }}
+        environment:
+          description: The environment (dev, staging, prod)
+          default: {{ .Values.project.environment }}
+
+  Pulumi.{{ .Values.project.environment }}.yaml: |
+    config:
+      aws:region: {{ .Values.aws.region }}
+      projectName: {{ .Values.project.name }}
+      environment: {{ .Values.project.environment }}
+      bucketName: {{ .Values.project.bucketName }}
+      tags:
+        {{- toYaml .Values.project.tags | nindent 8 }}
+
+  package.json: |
+    {
+      "name": "{{ .Values.pulumi.project.name }}",
+      "version": "1.0.0",
+      "description": "{{ .Values.pulumi.project.description }}",
+      "main": "index.ts",
+      "scripts": {
+        "build": "tsc",
+        "start": "pulumi up"
+      },
+      "dependencies": {
+        "@pulumi/pulumi": "{{ .Values.dependencies.pulumi }}",
+        "@pulumi/aws": "{{ .Values.dependencies.pulumiAws }}"
+      },
+      "devDependencies": {
+        "@types/node": "{{ .Values.dependencies.nodeTypes }}",
+        "typescript": "{{ .Values.dependencies.typescript }}"
+      },
+      "engines": {
+        "node": "{{ .Values.nodejs.version }}"
+      }
+    }
+
+  tsconfig.json: |
+    {
+      "compilerOptions": {
+        "target": "{{ .Values.typescript.target }}",
+        "module": "{{ .Values.typescript.module }}",
+        "lib": {{ .Values.typescript.lib | toJson }},
+        "strict": {{ .Values.typescript.strict }},
+        "esModuleInterop": {{ .Values.typescript.esModuleInterop }},
+        "skipLibCheck": {{ .Values.typescript.skipLibCheck }},
+        "forceConsistentCasingInFileNames": {{ .Values.typescript.forceConsistentCasingInFileNames }},
+        "moduleResolution": "{{ .Values.typescript.moduleResolution }}",
+        "outDir": "./dist",
+        "rootDir": "./",
+        "declaration": true,
+        "sourceMap": true
+      },
+      "include": [
+        "**/*.ts"
+      ],
+      "exclude": [
+        "node_modules",
+        "dist"
+      ]
+    }
+
+  index.ts: |
+{{ include "pulumi-operator-aws.pulumi-program" . | indent 4 }}

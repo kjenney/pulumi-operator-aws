@@ -1,0 +1,17 @@
+apiVersion: v2
+name: pulumi-operator-aws
+description: A Helm chart for deploying AWS resources using Pulumi Kubernetes Operator
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - pulumi
+  - aws
+  - infrastructure
+  - kubernetes-operator
+home: https://github.com/pulumi/pulumi-kubernetes-operator
+sources:
+  - https://github.com/pulumi/pulumi-kubernetes-operator
+maintainers:
+  - name: Pulumi Team
+    email: support@pulumi.com

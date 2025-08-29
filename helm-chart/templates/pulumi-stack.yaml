@@ -1,0 +1,62 @@
+apiVersion: pulumi.com/v1
+kind: Stack
+metadata:
+  name: {{ .Values.pulumi.stack.name }}
+  namespace: {{ .Values.global.namespace.name }}
+  labels:
+    {{- include "pulumi-operator-aws.labels" . | nindent 4 }}
+spec:
+  # The stack name in format: organization/project/stack
+  stack: "{{ .Values.pulumi.stack.name }}"
+  
+  # Service account for the workspace pod
+  serviceAccountName: {{ .Values.pulumi.stack.serviceAccountName | quote }}
+  
+  {{- if .Values.pulumi.stack.git.enabled }}
+  # Git repository containing the Pulumi program
+  projectRepo: {{ .Values.pulumi.stack.git.repo | quote }}
+  repoDir: {{ .Values.pulumi.stack.git.repoDir | quote }}
+  branch: {{ .Values.pulumi.stack.git.branch | quote }}
+  {{- end }}
+  
+  {{- if .Values.pulumi.stack.useConfigMap }}
+  # Use ConfigMap instead of Git repository
+  programRef:
+    name: {{ .Values.configMap.name }}
+  {{- end }}
+  
+  # Environment variables for AWS and Pulumi Cloud
+  envRefs:
+    AWS_ACCESS_KEY_ID:
+      type: Secret
+      secret:
+        name: {{ .Values.aws.credentials.secretName }}
+        key: AWS_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY:
+      type: Secret
+      secret:
+        name: {{ .Values.aws.credentials.secretName }}
+        key: AWS_SECRET_ACCESS_KEY
+    AWS_REGION:
+      type: Secret
+      secret:
+        name: {{ .Values.aws.credentials.secretName }}
+        key: AWS_REGION
+    PULUMI_ACCESS_TOKEN:
+      type: Secret
+      secret:
+        name: {{ .Values.pulumi.accessToken.secretName }}
+        key: accessToken
+  
+  # Configuration for the Pulumi program
+  config:
+    aws:region: {{ .Values.aws.region }}
+    projectName: {{ .Values.project.name }}
+    environment: {{ .Values.project.environment }}
+    bucketName: {{ .Values.project.bucketName }}
+  
+  # Clean up AWS resources when the Stack is deleted
+  destroyOnFinalize: {{ .Values.pulumi.stack.destroyOnFinalize }}
+  
+  # Refresh the stack every X seconds to check for changes
+  resyncFrequencySeconds: {{ .Values.pulumi.stack.resyncFrequencySeconds }}

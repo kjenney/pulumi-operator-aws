@@ -1,0 +1,37 @@
+# Patterns to ignore when building packages
+# This is similar to .gitignore and supports shell glob matching
+
+# Common VCS dirs
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+
+# Common backup files
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+
+# Various IDEs
+.project
+.idea/
+*.tmproj
+.vscode/
+
+# OS X
+.DS_Store
+
+# Example files and documentation that shouldn't be packaged
+README.md
+values-example.yaml
+
+# Backup and temporary files
+*.backup
+*.bkp
+backup-*
+temp-*

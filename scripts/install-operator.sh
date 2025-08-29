@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 OPERATOR_VERSION="${OPERATOR_VERSION:-2.2.0}"
-OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-pulumi-kubernetes-operator}"
+OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-pulumi-system}"
 CLUSTER_NAME="${CLUSTER_NAME:-pulumi-aws-demo}"
 
 # Functions

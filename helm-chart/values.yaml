@@ -1,0 +1,116 @@
+# Default values for pulumi-operator-aws.
+# This is a YAML-formatted file.
+# Declare variables to be substituted into your templates.
+
+# Global configuration
+global:
+  # Namespace configuration
+  namespace:
+    name: pulumi-aws-demo
+    labels:
+      name: pulumi-aws-demo
+      purpose: demo-workloads
+    create: false  # Let Helm handle namespace creation with --create-namespace
+
+# AWS Configuration
+aws:
+  region: us-west-2
+  # AWS credentials will be provided via secrets
+  credentials:
+    secretName: aws-credentials
+    # These values will be base64 encoded by deployment scripts
+    accessKeyId: ""
+    secretAccessKey: ""
+
+# Pulumi Configuration
+pulumi:
+  # Pulumi access token secret
+  accessToken:
+    secretName: pulumi-access-token
+    # This value will be base64 encoded by deployment scripts  
+    token: ""
+  
+  # Pulumi project configuration
+  project:
+    name: aws-resources
+    runtime: nodejs
+    description: Deploy AWS resources using Pulumi Kubernetes Operator
+  
+  # Pulumi stack configuration
+  stack:
+    name: aws-resources
+    environment: dev
+    # Service account name for the workspace pod
+    serviceAccountName: pulumi
+    # Clean up AWS resources when the Stack is deleted
+    destroyOnFinalize: true
+    # Refresh the stack every 60 seconds to check for changes
+    resyncFrequencySeconds: 60
+    
+    # Git repository configuration (optional - using ConfigMap instead)
+    git:
+      enabled: false
+      repo: "https://github.com/pulumi/examples.git"
+      repoDir: "aws-ts-s3-folder"
+      branch: "master"
+    
+    # Use ConfigMap for Pulumi program instead of Git
+    useConfigMap: true
+
+# Project Configuration
+project:
+  name: pulumi-aws-demo
+  environment: dev
+  bucketName: pulumi-aws-demo-bucket
+  tags:
+    Environment: dev
+    Project: pulumi-aws-demo
+    ManagedBy: pulumi-kubernetes-operator
+
+# Service Account Configuration
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # The name of the service account to use.
+  name: pulumi
+  # Additional annotations to add to the service account
+  annotations: {}
+
+# RBAC Configuration
+rbac:
+  # Specifies whether RBAC resources should be created
+  create: true
+  
+  clusterRole:
+    name: pulumi-stack-manager
+    # Additional rules can be added here
+    additionalRules: []
+
+# Operator namespace (where the operator itself runs)
+operatorNamespace: pulumi-kubernetes-operator
+
+# ConfigMap configuration for the Pulumi program
+configMap:
+  name: pulumi-program
+  
+# Dependencies versions
+dependencies:
+  pulumi: "^3.88.0"
+  pulumiAws: "^6.5.0"
+  nodeTypes: "^20.0.0"
+  typescript: "^5.0.0"
+
+# Node.js configuration
+nodejs:
+  version: ">=18.0.0"
+
+# TypeScript configuration
+typescript:
+  target: "ES2020"
+  module: "commonjs"
+  lib: ["ES2020"]
+  strict: true
+  esModuleInterop: true
+  skipLibCheck: true
+  forceConsistentCasingInFileNames: true
+  moduleResolution: "node"

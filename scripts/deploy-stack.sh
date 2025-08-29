@@ -5,6 +5,11 @@
 
 set -euo pipefail
 
+# Ensure we're running from the project root directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
+
 # Enable debug mode if DEBUG=1 is set
 if [[ "${DEBUG:-0}" == "1" ]]; then
     set -x
@@ -17,8 +22,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-NAMESPACE="${NAMESPACE:-pulumi-kubernetes-operator}"
+# Configuration - support both old and new environment variable patterns
+OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-pulumi-system}"
+STACK_NAMESPACE="${STACK_NAMESPACE:-pulumi-aws-demo}"
+# Support legacy NAMESPACE variable for backwards compatibility
+if [[ -n "${NAMESPACE:-}" ]] && [[ "${STACK_NAMESPACE}" == "pulumi-aws-demo" ]]; then
+    STACK_NAMESPACE="${NAMESPACE}"
+fi
 ENV_FILE="${ENV_FILE:-.env}"
 STACK_NAME="${STACK_NAME:-aws-resources}"
 
@@ -47,7 +57,7 @@ log_debug() {
 
 find_operator_namespace() {
     log_debug "Looking for Pulumi Kubernetes Operator..."
-    local namespaces=("pulumi-kubernetes-operator" "pulumi-system")
+    local namespaces=("${OPERATOR_NAMESPACE}" "pulumi-kubernetes-operator" "pulumi-system")
     
     for ns in "${namespaces[@]}"; do
         log_debug "Checking namespace: $ns"
@@ -58,7 +68,7 @@ find_operator_namespace() {
         fi
     done
     
-    log_debug "Operator not found in any namespace"
+    log_debug "Operator not found in any expected namespace"
     return 1
 }
 
@@ -84,8 +94,8 @@ check_prerequisites() {
     
     # Find the operator namespace
     log_debug "Finding operator namespace..."
-    local operator_ns
-    if ! operator_ns=$(find_operator_namespace); then
+    local found_operator_ns
+    if ! found_operator_ns=$(find_operator_namespace); then
         log_error "Pulumi Kubernetes Operator is not installed."
         log_info "Available deployments:"
         kubectl get deployments --all-namespaces | grep -E "(NAME|pulumi)" || echo "  No Pulumi deployments found"
@@ -93,12 +103,20 @@ check_prerequisites() {
         exit 1
     fi
     
-    log_info "Found Pulumi Kubernetes Operator in namespace: $operator_ns"
+    log_info "Found Pulumi Kubernetes Operator in namespace: $found_operator_ns"
     
-    # Update namespace if different
-    if [[ "$operator_ns" != "$NAMESPACE" ]]; then
-        log_info "Using operator namespace: $operator_ns"
-        NAMESPACE="$operator_ns"
+    # Update operator namespace if different from expected
+    if [[ "$found_operator_ns" != "$OPERATOR_NAMESPACE" ]]; then
+        log_info "Updating OPERATOR_NAMESPACE from $OPERATOR_NAMESPACE to $found_operator_ns"
+        OPERATOR_NAMESPACE="$found_operator_ns"
+    fi
+    
+    # Verify we're in the correct project directory
+    if [[ ! -d "k8s-manifests" ]]; then
+        log_error "k8s-manifests directory not found. Are you running from the project root?"
+        log_error "Current directory: $(pwd)"
+        log_error "Expected to find: $(pwd)/k8s-manifests/"
+        exit 1
     fi
     
     # Check if environment file exists
@@ -126,9 +144,10 @@ load_environment() {
         exit 1
     fi
     
-    # Save the detected namespace before loading environment
-    local detected_namespace="$NAMESPACE"
-    log_debug "Preserving detected namespace: $detected_namespace"
+    # Save the detected namespaces before loading environment
+    local detected_operator_ns="$OPERATOR_NAMESPACE"
+    local detected_stack_ns="$STACK_NAMESPACE"
+    log_debug "Preserving detected namespaces: operator=$detected_operator_ns, stack=$detected_stack_ns"
     
     # Load environment variables
     set -a
@@ -138,11 +157,17 @@ load_environment() {
     }
     set +a
     
-    # Restore the detected namespace if it was overridden by the env file
-    if [[ "$NAMESPACE" != "$detected_namespace" ]]; then
-        log_info "Environment file tried to set NAMESPACE to '$NAMESPACE', but using detected namespace: $detected_namespace"
-        NAMESPACE="$detected_namespace"
+    # Update namespaces from environment if they were set
+    OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-$detected_operator_ns}"
+    STACK_NAMESPACE="${STACK_NAMESPACE:-$detected_stack_ns}"
+    
+    # Handle legacy NAMESPACE variable
+    if [[ -n "${NAMESPACE:-}" ]]; then
+        log_info "Found legacy NAMESPACE variable, using for STACK_NAMESPACE: $NAMESPACE"
+        STACK_NAMESPACE="$NAMESPACE"
     fi
+    
+    log_info "Using namespaces: operator=$OPERATOR_NAMESPACE, stack=$STACK_NAMESPACE"
     
     # Validate required variables
     local required_vars=(
@@ -175,19 +200,19 @@ load_environment() {
 }
 
 create_secrets() {
-    log_info "Creating Kubernetes secrets for AWS credentials and Pulumi access token..."
+    log_info "Creating Kubernetes secrets in stack namespace: ${STACK_NAMESPACE}..."
     
-    # Ensure the namespace exists
-    log_debug "Creating namespace: $NAMESPACE"
-    kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - || {
-        log_error "Failed to create namespace $NAMESPACE"
+    # Ensure the stack namespace exists
+    log_debug "Creating namespace: $STACK_NAMESPACE"
+    kubectl create namespace ${STACK_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - || {
+        log_error "Failed to create namespace $STACK_NAMESPACE"
         exit 1
     }
     
-    # Create AWS credentials secret
+    # Create AWS credentials secret in stack namespace
     log_debug "Creating AWS credentials secret..."
     kubectl create secret generic aws-credentials \
-        --namespace=${NAMESPACE} \
+        --namespace=${STACK_NAMESPACE} \
         --from-literal=AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
         --from-literal=AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
         --from-literal=AWS_REGION="${AWS_REGION}" \
@@ -196,86 +221,222 @@ create_secrets() {
         exit 1
     }
     
-    # Create Pulumi access token secret
+    # Create Pulumi access token secret in stack namespace
     log_debug "Creating Pulumi access token secret..."
     kubectl create secret generic pulumi-access-token \
-        --namespace=${NAMESPACE} \
+        --namespace=${STACK_NAMESPACE} \
         --from-literal=accessToken="${PULUMI_ACCESS_TOKEN}" \
         --dry-run=client -o yaml | kubectl apply -f - || {
         log_error "Failed to create Pulumi access token secret"
         exit 1
     }
     
-    log_success "Secrets created successfully!"
+    log_success "Secrets created successfully in namespace: ${STACK_NAMESPACE}!"
+}
+
+prepare_manifests() {
+    log_info "Preparing Kubernetes manifests for namespace: ${STACK_NAMESPACE}..." >&2
+    
+    # Verify we're in the correct directory
+    if [[ ! -d "k8s-manifests" ]]; then
+        log_error "k8s-manifests directory not found. Are you running from the project root?" >&2
+        log_error "Current directory: $(pwd)" >&2
+        exit 1
+    fi
+    
+    # Create temporary directory for processed manifests
+    local temp_dir="/tmp/pulumi-manifests-$$"
+    if ! mkdir -p "$temp_dir"; then
+        log_error "Failed to create temporary directory: $temp_dir" >&2
+        exit 1
+    fi
+    log_debug "Created temporary directory: $temp_dir" >&2
+    
+    # Process namespace template if it exists
+    if [[ -f "k8s-manifests/namespace.yaml.template" ]]; then
+        log_debug "Processing namespace template..." >&2
+        if ! sed "s/__STACK_NAMESPACE__/${STACK_NAMESPACE}/g" k8s-manifests/namespace.yaml.template > "$temp_dir/namespace.yaml"; then
+            log_error "Failed to process namespace template" >&2
+            rm -rf "$temp_dir"
+            exit 1
+        fi
+    elif [[ -f "k8s-manifests/namespace.yaml" ]]; then
+        log_debug "Using existing namespace manifest..." >&2
+        if ! cp k8s-manifests/namespace.yaml "$temp_dir/namespace.yaml"; then
+            log_error "Failed to copy namespace manifest" >&2
+            rm -rf "$temp_dir"
+            exit 1
+        fi
+    fi
+    
+    # Process service account template
+    if [[ -f "k8s-manifests/service-account.yaml.template" ]]; then
+        log_debug "Processing service account template..." >&2
+        if ! sed "s/__STACK_NAMESPACE__/${STACK_NAMESPACE}/g" k8s-manifests/service-account.yaml.template > "$temp_dir/service-account.yaml"; then
+            log_error "Failed to process service account template" >&2
+            rm -rf "$temp_dir"
+            exit 1
+        fi
+    elif [[ -f "k8s-manifests/service-account.yaml" ]]; then
+        log_debug "Using existing service account manifest..." >&2
+        if ! cp k8s-manifests/service-account.yaml "$temp_dir/service-account.yaml"; then
+            log_error "Failed to copy service account manifest" >&2
+            rm -rf "$temp_dir"
+            exit 1
+        fi
+    else
+        log_error "No service account manifest found" >&2
+        log_error "Available files in k8s-manifests:" >&2
+        ls -la k8s-manifests/ >&2 || log_error "Cannot list k8s-manifests directory" >&2
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+    
+    # Process stack template
+    if [[ -f "k8s-manifests/pulumi-stack.yaml.template" ]]; then
+        log_debug "Processing stack template..." >&2
+        if ! sed "s/__STACK_NAMESPACE__/${STACK_NAMESPACE}/g" k8s-manifests/pulumi-stack.yaml.template > "$temp_dir/pulumi-stack.yaml"; then
+            log_error "Failed to process stack template" >&2
+            rm -rf "$temp_dir"
+            exit 1
+        fi
+    elif [[ -f "k8s-manifests/pulumi-stack.yaml" ]]; then
+        log_debug "Processing existing stack manifest..." >&2
+        if ! sed "s/namespace: .*/namespace: ${STACK_NAMESPACE}/g" k8s-manifests/pulumi-stack.yaml > "$temp_dir/pulumi-stack.yaml"; then
+            log_error "Failed to process stack manifest" >&2
+            rm -rf "$temp_dir"
+            exit 1
+        fi
+    else
+        log_error "No stack manifest found" >&2
+        log_error "Available files in k8s-manifests:" >&2
+        ls -la k8s-manifests/ >&2 || log_error "Cannot list k8s-manifests directory" >&2
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+    
+    # Copy other manifests if they exist
+    if [[ -f "k8s-manifests/pulumi-program-configmap.yaml" ]]; then
+        log_debug "Copying configmap manifest..." >&2
+        if ! cp k8s-manifests/pulumi-program-configmap.yaml "$temp_dir/"; then
+            log_error "Failed to copy configmap manifest" >&2
+            rm -rf "$temp_dir"
+            exit 1
+        fi
+    fi
+    
+    # Verify all expected files were created
+    log_debug "Verifying manifest files were created in $temp_dir:" >&2
+    if ! ls -la "$temp_dir" >&2; then
+        log_error "Failed to list files in temporary directory" >&2
+        exit 1
+    fi
+    
+    echo "$temp_dir"
 }
 
 deploy_manifests() {
     log_info "Deploying Kubernetes manifests..."
     
-    # Check if manifest files exist
-    local manifests=(
-        "k8s-manifests/service-account.yaml"
-        "k8s-manifests/pulumi-program-configmap.yaml"
-        "k8s-manifests/pulumi-stack.yaml"
+    # Prepare manifests in temporary directory
+    local temp_dir
+    temp_dir=$(prepare_manifests)
+    
+    if [[ -z "$temp_dir" ]] || [[ ! -d "$temp_dir" ]]; then
+        log_error "Failed to prepare manifests - temporary directory not created"
+        exit 1
+    fi
+    
+    # Check if manifest files exist in temp directory
+    local manifests=()
+    
+    # Add namespace if it exists
+    if [[ -f "$temp_dir/namespace.yaml" ]]; then
+        manifests+=("$temp_dir/namespace.yaml")
+    fi
+    
+    # Add required manifests
+    manifests+=(
+        "$temp_dir/service-account.yaml"
+        "$temp_dir/pulumi-stack.yaml"
     )
+    
+    # Add configmap if it exists
+    if [[ -f "$temp_dir/pulumi-program-configmap.yaml" ]]; then
+        manifests+=("$temp_dir/pulumi-program-configmap.yaml")
+    fi
     
     for manifest in "${manifests[@]}"; do
         if [[ ! -f "$manifest" ]]; then
             log_error "Manifest file not found: $manifest"
-            log_info "Available files in k8s-manifests/:"
-            ls -la k8s-manifests/ || echo "  Directory not found"
+            log_info "Available files in temp directory:"
+            ls -la "$temp_dir" || echo "  Directory not found"
+            rm -rf "$temp_dir"
             exit 1
         fi
     done
     
-    # Apply Service Account first
-    log_debug "Applying Service Account..."
-    kubectl apply -f k8s-manifests/service-account.yaml || {
-        log_error "Failed to apply Service Account"
-        exit 1
-    }
-    
-    # Apply ConfigMap with Pulumi program
-    log_debug "Applying ConfigMap..."
-    kubectl apply -f k8s-manifests/pulumi-program-configmap.yaml || {
-        log_error "Failed to apply ConfigMap"
-        exit 1
-    }
-    
-    # Update the Stack manifest with the correct namespace if needed
-    if [[ "$NAMESPACE" != "pulumi-system" ]]; then
-        log_info "Updating Stack manifest for namespace: $NAMESPACE"
-        sed "s/namespace: pulumi-system/namespace: ${NAMESPACE}/g" k8s-manifests/pulumi-stack.yaml > /tmp/pulumi-stack-updated.yaml
-        kubectl apply -f /tmp/pulumi-stack-updated.yaml || {
-            log_error "Failed to apply updated Stack manifest"
-            rm -f /tmp/pulumi-stack-updated.yaml
-            exit 1
-        }
-        rm -f /tmp/pulumi-stack-updated.yaml
-    else
-        log_debug "Applying Stack manifest..."
-        kubectl apply -f k8s-manifests/pulumi-stack.yaml || {
-            log_error "Failed to apply Stack manifest"
+    # Apply Namespace first if it exists
+    if [[ -f "$temp_dir/namespace.yaml" ]]; then
+        log_debug "Applying Namespace..."
+        kubectl apply -f "$temp_dir/namespace.yaml" || {
+            log_error "Failed to apply Namespace"
+            rm -rf "$temp_dir"
             exit 1
         }
     fi
+    
+    # Apply Service Account second
+    log_debug "Applying Service Account..."
+    kubectl apply -f "$temp_dir/service-account.yaml" || {
+        log_error "Failed to apply Service Account"
+        rm -rf "$temp_dir"
+        exit 1
+    }
+    
+    # Apply ConfigMap if it exists
+    if [[ -f "$temp_dir/pulumi-program-configmap.yaml" ]]; then
+        log_debug "Applying ConfigMap..."
+        kubectl apply -f "$temp_dir/pulumi-program-configmap.yaml" || {
+            log_error "Failed to apply ConfigMap"
+            rm -rf "$temp_dir"
+            exit 1
+        }
+    fi
+    
+    # Apply Stack manifest
+    log_debug "Applying Stack manifest..."
+    kubectl apply -f "$temp_dir/pulumi-stack.yaml" || {
+        log_error "Failed to apply Stack manifest"
+        rm -rf "$temp_dir"
+        exit 1
+    }
+    
+    # Cleanup temporary directory
+    rm -rf "$temp_dir"
     
     log_success "Kubernetes manifests deployed successfully!"
 }
 
 wait_for_stack() {
-    log_info "Waiting for Pulumi stack to be ready..."
+    log_info "Waiting for Pulumi stack to be ready in namespace: ${STACK_NAMESPACE}..."
     
     local timeout=900  # 15 minutes
     local interval=15
     local elapsed=0
     
     # First, let's verify the stack name and namespace are correct
-    log_debug "Looking for stack '$STACK_NAME' in namespace '$NAMESPACE'"
+    log_debug "Looking for stack '$STACK_NAME' in namespace '$STACK_NAMESPACE'"
     
     # Check if we can find the stack in the expected namespace
-    if ! kubectl get stack ${STACK_NAME} -n ${NAMESPACE} >/dev/null 2>&1; then
-        log_warning "Stack '${STACK_NAME}' not found in namespace '${NAMESPACE}'"
+    while [[ $elapsed -lt 60 ]] && ! kubectl get stack ${STACK_NAME} -n ${STACK_NAMESPACE} >/dev/null 2>&1; do
+        log_info "Waiting for stack to be created... (${elapsed}s elapsed)"
+        sleep $interval
+        elapsed=$((elapsed + interval))
+    done
+    
+    if ! kubectl get stack ${STACK_NAME} -n ${STACK_NAMESPACE} >/dev/null 2>&1; then
+        log_error "Stack '${STACK_NAME}' not found in namespace '${STACK_NAMESPACE}' after waiting"
         log_info "Searching for stacks in all namespaces..."
         
         # Look for any stacks that might match
@@ -285,54 +446,21 @@ wait_for_stack() {
         if [[ -n "$all_stacks" ]]; then
             log_info "Found the following stacks:"
             echo "$all_stacks"
-            
-            # Try to find a stack with the expected name in any namespace
-            local found_namespace
-            found_namespace=$(echo "$all_stacks" | grep "$STACK_NAME" | awk '{print $1}' | head -1)
-            
-            if [[ -n "$found_namespace" ]]; then
-                log_info "Found stack '${STACK_NAME}' in namespace '${found_namespace}', updating namespace"
-                NAMESPACE="$found_namespace"
-            else
-                # Look for any stack that might be ours (aws-resources, dev, etc.)
-                local possible_stack
-                possible_stack=$(echo "$all_stacks" | grep -E "(aws-resources|dev|${PROJECT_NAME:-})" | head -1)
-                
-                if [[ -n "$possible_stack" ]]; then
-                    local found_stack_name found_stack_namespace
-                    found_stack_namespace=$(echo "$possible_stack" | awk '{print $1}')
-                    found_stack_name=$(echo "$possible_stack" | awk '{print $2}')
-                    
-                    log_warning "Stack '${STACK_NAME}' not found, but found '${found_stack_name}' in '${found_stack_namespace}'"
-                    log_info "Updating to use found stack: ${found_stack_name} in ${found_stack_namespace}"
-                    STACK_NAME="$found_stack_name"
-                    NAMESPACE="$found_stack_namespace"
-                else
-                    log_error "No matching stacks found. Available stacks:"
-                    echo "$all_stacks"
-                    return 1
-                fi
-            fi
         else
             log_error "No stacks found in any namespace"
-            return 1
         fi
+        return 1
     fi
     
-    log_info "Monitoring stack '${STACK_NAME}' in namespace '${NAMESPACE}'"
+    log_info "Monitoring stack '${STACK_NAME}' in namespace '${STACK_NAMESPACE}'"
+    
+    # Reset elapsed time for the actual wait
+    elapsed=0
     
     while [[ $elapsed -lt $timeout ]]; do
-        # Check if stack exists (should exist now after the above logic)
-        if ! kubectl get stack ${STACK_NAME} -n ${NAMESPACE} >/dev/null 2>&1; then
-            log_info "Waiting for stack to be created... (${elapsed}s elapsed)"
-            sleep $interval
-            elapsed=$((elapsed + interval))
-            continue
-        fi
-        
         # Check the Ready condition in the status.conditions array
         local ready_condition
-        ready_condition=$(kubectl get stack ${STACK_NAME} -n ${NAMESPACE} -o jsonpath='{.status.conditions[?(@.type=="Ready")]}' 2>/dev/null || echo "")
+        ready_condition=$(kubectl get stack ${STACK_NAME} -n ${STACK_NAMESPACE} -o jsonpath='{.status.conditions[?(@.type=="Ready")]}' 2>/dev/null || echo "")
         
         if [[ -n "$ready_condition" ]]; then
             # Extract the status and message from the Ready condition
@@ -350,10 +478,10 @@ wait_for_stack() {
             elif [[ "$ready_status" == "False" ]]; then
                 log_error "Pulumi stack deployment failed!"
                 log_error "Message: $ready_message"
-                kubectl describe stack ${STACK_NAME} -n ${NAMESPACE}
+                kubectl describe stack ${STACK_NAME} -n ${STACK_NAMESPACE}
                 echo ""
                 log_info "Stack events:"
-                kubectl get events -n ${NAMESPACE} --field-selector involvedObject.name=${STACK_NAME} --sort-by='.lastTimestamp' 2>/dev/null || true
+                kubectl get events -n ${STACK_NAMESPACE} --field-selector involvedObject.name=${STACK_NAME} --sort-by='.lastTimestamp' 2>/dev/null || true
                 return 1
             else
                 log_info "Stack Ready condition status: $ready_status (${elapsed}s elapsed)"
@@ -370,7 +498,7 @@ wait_for_stack() {
     done
     
     log_error "Timeout waiting for stack deployment to complete"
-    kubectl describe stack ${STACK_NAME} -n ${NAMESPACE}
+    kubectl describe stack ${STACK_NAME} -n ${STACK_NAMESPACE}
     return 1
 }
 
@@ -379,7 +507,7 @@ display_stack_info() {
     echo "============================="
     
     # Get stack status
-    kubectl get stack ${STACK_NAME} -n ${NAMESPACE} || {
+    kubectl get stack ${STACK_NAME} -n ${STACK_NAMESPACE} || {
         log_error "Failed to get stack status"
         return 1
     }
@@ -387,7 +515,7 @@ display_stack_info() {
     
     # Get stack details
     log_info "Stack details:"
-    kubectl describe stack ${STACK_NAME} -n ${NAMESPACE} || {
+    kubectl describe stack ${STACK_NAME} -n ${STACK_NAMESPACE} || {
         log_warning "Failed to describe stack"
     }
     echo ""
@@ -395,7 +523,7 @@ display_stack_info() {
     # Get stack outputs
     log_info "Stack outputs:"
     local outputs
-    outputs=$(kubectl get stack ${STACK_NAME} -n ${NAMESPACE} -o jsonpath='{.status.outputs}' 2>/dev/null || echo "{}")
+    outputs=$(kubectl get stack ${STACK_NAME} -n ${STACK_NAMESPACE} -o jsonpath='{.status.outputs}' 2>/dev/null || echo "{}")
     
     if [[ "$outputs" != "{}" ]] && [[ "$outputs" != "" ]] && [[ "$outputs" != "null" ]]; then
         echo "$outputs" | jq '.' 2>/dev/null || echo "$outputs"
@@ -405,32 +533,26 @@ display_stack_info() {
     
     # Show workspace information if available
     log_info "Workspace information:"
-    kubectl get pods -n ${NAMESPACE} -l pulumi.com/stack-name=${STACK_NAME} 2>/dev/null || log_info "No workspace pods found"
+    kubectl get pods -n ${STACK_NAMESPACE} -l pulumi.com/stack-name=${STACK_NAME} 2>/dev/null || log_info "No workspace pods found"
 }
 
 monitor_deployment() {
     log_info "Monitoring stack deployment..."
-    log_debug "Using namespace for monitoring: $NAMESPACE"
-    
-    # Double-check the operator namespace to be sure
-    local operator_ns
-    if operator_ns=$(find_operator_namespace); then
-        log_debug "Confirmed operator in namespace: $operator_ns"
-        NAMESPACE="$operator_ns"
-    fi
+    log_info "Operator namespace: ${OPERATOR_NAMESPACE}"
+    log_info "Stack namespace: ${STACK_NAMESPACE}"
     
     # Show real-time logs from the operator
     log_info "Recent operator logs:"
-    kubectl logs deployment/pulumi-kubernetes-operator-controller-manager -n ${NAMESPACE} --tail=20 2>/dev/null || log_warning "Could not fetch operator logs"
+    kubectl logs deployment/pulumi-kubernetes-operator-controller-manager -n ${OPERATOR_NAMESPACE} --tail=20 2>/dev/null || log_warning "Could not fetch operator logs"
     echo ""
     
     # Check if there are any workspace pods for this stack
     local workspace_pods
-    workspace_pods=$(kubectl get pods -n ${NAMESPACE} -l pulumi.com/stack-name=${STACK_NAME} --no-headers 2>/dev/null | wc -l)
+    workspace_pods=$(kubectl get pods -n ${STACK_NAMESPACE} -l pulumi.com/stack-name=${STACK_NAME} --no-headers 2>/dev/null | wc -l)
     
     if [[ "$workspace_pods" -gt 0 ]]; then
         log_info "Found workspace pod(s) for stack. Following workspace logs..."
-        kubectl logs -f -l pulumi.com/stack-name=${STACK_NAME} -n ${NAMESPACE} &
+        kubectl logs -f -l pulumi.com/stack-name=${STACK_NAME} -n ${STACK_NAMESPACE} &
         local logs_pid=$!
         
         # Wait for stack completion with timeout
@@ -452,7 +574,7 @@ monitor_deployment() {
         return $stack_result
     else
         log_info "No workspace pods found yet. Following operator logs..."
-        kubectl logs -f deployment/pulumi-kubernetes-operator-controller-manager -n ${NAMESPACE} &
+        kubectl logs -f deployment/pulumi-kubernetes-operator-controller-manager -n ${OPERATOR_NAMESPACE} &
         local logs_pid=$!
         
         # Wait for stack with timeout
@@ -511,12 +633,16 @@ validate_aws_resources() {
 display_next_steps() {
     log_info "Deployment completed successfully!"
     echo ""
+    log_info "Namespace Information:"
+    echo "- Operator running in: ${OPERATOR_NAMESPACE}"
+    echo "- Stack deployed to: ${STACK_NAMESPACE}"
+    echo ""
     log_info "Next steps:"
     echo "1. Check the AWS console to verify your resources were created"
-    echo "2. Monitor the stack: kubectl get stack ${STACK_NAME} -n ${NAMESPACE}"
-    echo "3. View stack outputs: kubectl get stack ${STACK_NAME} -n ${NAMESPACE} -o jsonpath='{.status.outputs}' | jq ."
-    echo "4. Check workspace pods: kubectl get pods -n ${NAMESPACE} -l pulumi.com/stack-name=${STACK_NAME}"
-    echo "5. Check operator logs: kubectl logs -f deployment/pulumi-kubernetes-operator-controller-manager -n ${NAMESPACE}"
+    echo "2. Monitor the stack: kubectl get stack ${STACK_NAME} -n ${STACK_NAMESPACE}"
+    echo "3. View stack outputs: kubectl get stack ${STACK_NAME} -n ${STACK_NAMESPACE} -o jsonpath='{.status.outputs}' | jq ."
+    echo "4. Check workspace pods: kubectl get pods -n ${STACK_NAMESPACE} -l pulumi.com/stack-name=${STACK_NAME}"
+    echo "5. Check operator logs: kubectl logs -f deployment/pulumi-kubernetes-operator-controller-manager -n ${OPERATOR_NAMESPACE}"
     echo ""
     log_info "To clean up resources:"
     echo "   ./scripts/cleanup.sh"
@@ -530,7 +656,8 @@ show_debug_info() {
     echo "=================="
     echo "Current directory: $(pwd)"
     echo "Environment file: $ENV_FILE (exists: $([ -f "$ENV_FILE" ] && echo "yes" || echo "no"))"
-    echo "Target namespace: $NAMESPACE"
+    echo "Operator namespace: $OPERATOR_NAMESPACE"
+    echo "Stack namespace: $STACK_NAMESPACE"
     echo "Stack name: $STACK_NAME"
     echo "Kubectl context: $(kubectl config current-context 2>/dev/null || echo 'none')"
     echo ""
@@ -544,6 +671,7 @@ show_debug_info() {
 main() {
     log_info "Deploying AWS resources using Pulumi Kubernetes Operator..."
     echo "==========================================================="
+    log_info "Project directory: $(pwd)"
     
     # Show debug info if DEBUG=1
     if [[ "${DEBUG:-0}" == "1" ]]; then
@@ -555,7 +683,7 @@ main() {
     create_secrets
     deploy_manifests
     
-    log_debug "About to monitor deployment with namespace: $NAMESPACE"
+    log_debug "About to monitor deployment with operator namespace: $OPERATOR_NAMESPACE, stack namespace: $STACK_NAMESPACE"
     monitor_deployment
     
     if [[ $? -eq 0 ]]; then
@@ -566,9 +694,9 @@ main() {
     else
         log_error "AWS resources deployment failed!"
         log_info "Check the logs above for details. You can also run:"
-        echo "  kubectl describe stack ${STACK_NAME} -n ${NAMESPACE}"
-        echo "  kubectl logs deployment/pulumi-kubernetes-operator-controller-manager -n ${NAMESPACE}"
-        echo "  kubectl get pods -n ${NAMESPACE} -l pulumi.com/stack-name=${STACK_NAME}"
+        echo "  kubectl describe stack ${STACK_NAME} -n ${STACK_NAMESPACE}"
+        echo "  kubectl logs deployment/pulumi-kubernetes-operator-controller-manager -n ${OPERATOR_NAMESPACE}"
+        echo "  kubectl get pods -n ${STACK_NAMESPACE} -l pulumi.com/stack-name=${STACK_NAME}"
         
         if [[ "${DEBUG:-0}" != "1" ]]; then
             log_info ""

@@ -12,8 +12,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-NAMESPACE="${NAMESPACE:-pulumi-system}"
+# Configuration - support both old and new environment variable patterns
+OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-pulumi-system}"
+STACK_NAMESPACE="${STACK_NAMESPACE:-pulumi-aws-demo}"
+# Support legacy NAMESPACE variable for backwards compatibility
+if [[ -n "${NAMESPACE:-}" ]]; then
+    STACK_NAMESPACE="${NAMESPACE}"
+fi
 CLUSTER_NAME="${CLUSTER_NAME:-pulumi-aws-demo}"
 STACK_NAME="${STACK_NAME:-aws-resources}"
 
@@ -35,7 +40,7 @@ log_error() {
 }
 
 find_operator_namespace() {
-    local namespaces=("pulumi-system" "pulumi-kubernetes-operator")
+    local namespaces=("${OPERATOR_NAMESPACE}" "pulumi-system" "pulumi-kubernetes-operator")
     
     for ns in "${namespaces[@]}"; do
         if kubectl get deployment pulumi-kubernetes-operator-controller-manager -n ${ns} &> /dev/null; then
@@ -47,25 +52,39 @@ find_operator_namespace() {
     return 1
 }
 
-find_stack_namespace() {
-    local namespaces=("pulumi-system" "pulumi-kubernetes-operator")
-    
-    for ns in "${namespaces[@]}"; do
-        if kubectl get stack ${STACK_NAME} -n ${ns} &> /dev/null; then
-            echo "$ns"
-            return 0
+find_stack_namespaces() {
+    # Look for stacks in all namespaces and return a list
+    kubectl get stacks --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' | sort -u
+}
+
+load_environment() {
+    # Load environment if .env file exists
+    if [[ -f ".env" ]]; then
+        log_info "Loading environment from .env file..."
+        set -a
+        source .env 2>/dev/null || true
+        set +a
+        
+        # Update namespaces from environment
+        OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-pulumi-system}"
+        STACK_NAMESPACE="${STACK_NAMESPACE:-pulumi-aws-demo}"
+        
+        # Handle legacy NAMESPACE variable
+        if [[ -n "${NAMESPACE:-}" ]]; then
+            STACK_NAMESPACE="$NAMESPACE"
         fi
-    done
-    
-    return 1
+        
+        log_info "Using namespaces: operator=${OPERATOR_NAMESPACE}, stack=${STACK_NAMESPACE}"
+    fi
 }
 
 confirm_cleanup() {
     echo ""
     log_warning "This will delete:"
-    echo "  - Pulumi stack and AWS resources"
+    echo "  - Pulumi stacks and AWS resources in namespace(s): $(find_stack_namespaces | tr '\n' ' ')"
     echo "  - Kubernetes secrets and configmaps"
-    echo "  - Pulumi Kubernetes Operator"
+    echo "  - Pulumi Kubernetes Operator in namespace: ${OPERATOR_NAMESPACE}"
+    echo "  - Associated Kubernetes namespaces"
     echo "  - Local Kubernetes cluster (if requested)"
     echo ""
     log_warning "AWS resources will be permanently deleted!"
@@ -79,64 +98,95 @@ confirm_cleanup() {
     fi
 }
 
-cleanup_stack() {
-    log_info "Cleaning up Pulumi stack..."
+cleanup_stacks() {
+    log_info "Cleaning up Pulumi stacks..."
     
-    # Find the stack namespace
-    local stack_ns
-    stack_ns=$(find_stack_namespace)
-    if [[ $? -ne 0 ]]; then
-        log_info "Pulumi stack not found in any namespace, skipping..."
+    # Find all stack namespaces
+    local stack_namespaces
+    stack_namespaces=$(find_stack_namespaces)
+    
+    if [[ -z "$stack_namespaces" ]]; then
+        log_info "No Pulumi stacks found, skipping..."
         return 0
     fi
     
-    log_info "Found stack in namespace: $stack_ns"
-    
-    # Delete the stack (this should trigger AWS resource cleanup)
-    log_info "Deleting stack ${STACK_NAME} in namespace ${stack_ns}..."
-    kubectl delete stack ${STACK_NAME} -n ${stack_ns} --timeout=600s
-    
-    # Wait for stack deletion to complete
-    local timeout=900  # 15 minutes
-    local interval=15
-    local elapsed=0
-    
-    log_info "Waiting for AWS resources to be deleted..."
-    while kubectl get stack ${STACK_NAME} -n ${stack_ns} &> /dev/null && [[ $elapsed -lt $timeout ]]; do
-        log_info "Stack deletion in progress... (${elapsed}s elapsed)"
+    # Process each namespace that contains stacks
+    while IFS= read -r stack_ns; do
+        [[ -n "$stack_ns" ]] || continue
+        log_info "Processing stacks in namespace: $stack_ns"
         
-        # Show workspace pods if any
-        local workspace_pods
-        workspace_pods=$(kubectl get pods -n ${stack_ns} -l pulumi.com/stack-name=${STACK_NAME} --no-headers 2>/dev/null | wc -l)
-        if [[ "$workspace_pods" -gt 0 ]]; then
-            log_info "Workspace pods still running for stack cleanup..."
+        # Get all stacks in this namespace
+        local stacks
+        stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | awk '{print $1}' || true)
+        
+        if [[ -n "$stacks" ]]; then
+            while IFS= read -r stack_name; do
+                [[ -n "$stack_name" ]] || continue
+                log_info "Deleting stack ${stack_name} in namespace ${stack_ns}..."
+                kubectl delete stack ${stack_name} -n ${stack_ns} --timeout=600s || {
+                    log_warning "Failed to delete stack gracefully, forcing deletion..."
+                    kubectl patch stack ${stack_name} -n ${stack_ns} -p '{"metadata":{"finalizers":[]}}' --type=merge || true
+                    kubectl delete stack ${stack_name} -n ${stack_ns} --force --grace-period=0 || true
+                }
+            done <<< "$stacks"
+            
+            # Wait for stack deletions to complete
+            local timeout=900  # 15 minutes
+            local interval=15
+            local elapsed=0
+            
+            log_info "Waiting for AWS resources to be deleted in namespace ${stack_ns}..."
+            while [[ $elapsed -lt $timeout ]]; do
+                local remaining_stacks
+                remaining_stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | wc -l)
+                
+                if [[ "$remaining_stacks" -eq 0 ]]; then
+                    break
+                fi
+                
+                log_info "Stack deletion in progress in ${stack_ns}... (${elapsed}s elapsed)"
+                
+                # Show workspace pods if any
+                local workspace_pods
+                workspace_pods=$(kubectl get pods -n ${stack_ns} -l pulumi.com/stack-name --no-headers 2>/dev/null | wc -l)
+                if [[ "$workspace_pods" -gt 0 ]]; then
+                    log_info "Workspace pods still running for stack cleanup..."
+                fi
+                
+                sleep $interval
+                elapsed=$((elapsed + interval))
+            done
+            
+            # Force cleanup any remaining stacks
+            local remaining_stacks
+            remaining_stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | awk '{print $1}' || true)
+            if [[ -n "$remaining_stacks" ]]; then
+                log_warning "Timeout reached, forcing deletion of remaining stacks in ${stack_ns}..."
+                while IFS= read -r stack_name; do
+                    [[ -n "$stack_name" ]] || continue
+                    kubectl patch stack ${stack_name} -n ${stack_ns} -p '{"metadata":{"finalizers":[]}}' --type=merge || true
+                    kubectl delete stack ${stack_name} -n ${stack_ns} --force --grace-period=0 || true
+                done <<< "$remaining_stacks"
+            fi
+            
+            # Clean up any remaining workspace pods
+            log_info "Cleaning up workspace pods in ${stack_ns}..."
+            kubectl delete pods -n ${stack_ns} -l pulumi.com/stack-name --force --grace-period=0 2>/dev/null || true
         fi
-        
-        sleep $interval
-        elapsed=$((elapsed + interval))
-    done
+    done <<< "$stack_namespaces"
     
-    if kubectl get stack ${STACK_NAME} -n ${stack_ns} &> /dev/null; then
-        log_error "Timeout waiting for stack deletion. You may need to manually delete AWS resources."
-        log_info "Forcing stack deletion..."
-        kubectl patch stack ${STACK_NAME} -n ${stack_ns} -p '{"metadata":{"finalizers":[]}}' --type=merge || true
-        kubectl delete stack ${STACK_NAME} -n ${stack_ns} --force --grace-period=0 || true
-    else
-        log_success "Pulumi stack deleted successfully!"
-    fi
-    
-    # Clean up any remaining workspace pods
-    log_info "Cleaning up workspace pods..."
-    kubectl delete pods -n ${stack_ns} -l pulumi.com/stack-name=${STACK_NAME} --force --grace-period=0 2>/dev/null || true
+    log_success "Pulumi stacks cleanup completed!"
 }
 
 cleanup_kubernetes_resources() {
     log_info "Cleaning up Kubernetes resources..."
     
-    # Try to clean up from multiple potential namespaces
-    local namespaces=("pulumi-system" "pulumi-kubernetes-operator")
+    # Get all namespaces that might contain our resources
+    local namespaces
+    namespaces=$(echo -e "${STACK_NAMESPACE}\n${OPERATOR_NAMESPACE}\npulumi-system\npulumi-kubernetes-operator\npulumi-aws-demo" | sort -u)
     
-    for ns in "${namespaces[@]}"; do
+    while IFS= read -r ns; do
+        [[ -n "$ns" ]] || continue
         if kubectl get namespace ${ns} &> /dev/null; then
             log_info "Cleaning up resources in namespace: $ns"
             
@@ -146,8 +196,17 @@ cleanup_kubernetes_resources() {
             # Delete Secrets
             kubectl delete secret aws-credentials -n ${ns} --ignore-not-found=true
             kubectl delete secret pulumi-access-token -n ${ns} --ignore-not-found=true
+            
+            # Delete Service Accounts
+            kubectl delete serviceaccount pulumi -n ${ns} --ignore-not-found=true
         fi
-    done
+    done <<< "$namespaces"
+    
+    # Delete ClusterRole and ClusterRoleBinding
+    log_info "Cleaning up cluster-wide RBAC resources..."
+    kubectl delete clusterrole pulumi-stack-manager --ignore-not-found=true
+    kubectl delete clusterrolebinding pulumi-stack-manager --ignore-not-found=true
+    kubectl delete clusterrolebinding pulumi:system:auth-delegator --ignore-not-found=true
     
     log_success "Kubernetes resources cleaned up!"
 }
@@ -157,8 +216,7 @@ uninstall_operator() {
     
     # Find the operator namespace
     local operator_ns
-    operator_ns=$(find_operator_namespace)
-    if [[ $? -ne 0 ]]; then
+    if ! operator_ns=$(find_operator_namespace); then
         log_info "Pulumi Kubernetes Operator not found, skipping..."
         return 0
     fi
@@ -178,6 +236,11 @@ uninstall_operator() {
     kubectl delete pods -n ${operator_ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator --force --grace-period=0 2>/dev/null || true
     kubectl delete pods -n ${operator_ns} -l app.kubernetes.io/component=controller --force --grace-period=0 2>/dev/null || true
     
+    # Delete services, configmaps, and other operator resources
+    kubectl delete service -n ${operator_ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator --ignore-not-found=true
+    kubectl delete configmap -n ${operator_ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator --ignore-not-found=true
+    kubectl delete secret -n ${operator_ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator --ignore-not-found=true
+    
     # Delete CRDs
     log_info "Deleting Pulumi CRDs..."
     kubectl delete crd stacks.pulumi.com --ignore-not-found=true
@@ -191,13 +254,29 @@ uninstall_operator() {
 cleanup_namespaces() {
     log_info "Cleaning up namespaces..."
     
-    # Delete pulumi-aws-demo namespace
-    kubectl delete namespace pulumi-aws-demo --ignore-not-found=true --timeout=300s
+    # List of namespaces to potentially delete
+    local namespaces_to_delete=("${STACK_NAMESPACE}" "pulumi-aws-demo")
     
-    # Delete operator namespaces
-    local namespaces=("pulumi-system" "pulumi-kubernetes-operator")
+    # Only delete operator namespace if it's not a system namespace
+    if [[ "${OPERATOR_NAMESPACE}" != "kube-system" ]] && [[ "${OPERATOR_NAMESPACE}" != "default" ]]; then
+        namespaces_to_delete+=("${OPERATOR_NAMESPACE}")
+    fi
     
-    for ns in "${namespaces[@]}"; do
+    # Also include common operator namespaces
+    namespaces_to_delete+=("pulumi-system" "pulumi-kubernetes-operator")
+    
+    # Remove duplicates and delete namespaces
+    local unique_namespaces
+    unique_namespaces=$(printf '%s\n' "${namespaces_to_delete[@]}" | sort -u)
+    
+    while IFS= read -r ns; do
+        [[ -n "$ns" ]] || continue
+        
+        # Skip system namespaces
+        if [[ "$ns" == "kube-system" ]] || [[ "$ns" == "default" ]] || [[ "$ns" == "kube-public" ]] || [[ "$ns" == "kube-node-lease" ]]; then
+            continue
+        fi
+        
         if kubectl get namespace ${ns} &> /dev/null; then
             log_info "Deleting namespace: $ns"
             kubectl delete namespace ${ns} --ignore-not-found=true --timeout=300s || {
@@ -206,7 +285,7 @@ cleanup_namespaces() {
                 kubectl delete namespace ${ns} --force --grace-period=0 2>/dev/null || true
             }
         fi
-    done
+    done <<< "$unique_namespaces"
     
     log_success "Namespaces cleaned up!"
 }
@@ -290,13 +369,18 @@ display_cleanup_summary() {
     log_success "Cleanup completed!"
     echo ""
     log_info "What was cleaned up:"
-    echo "  ✓ Pulumi stack and AWS resources"
+    echo "  ✓ Pulumi stacks and AWS resources"
     echo "  ✓ Kubernetes secrets and configmaps"
+    echo "  ✓ RBAC resources (ClusterRoles and ClusterRoleBindings)"
     echo "  ✓ Pulumi Kubernetes Operator"
     echo "  ✓ Kubernetes namespaces"
     if [[ "${delete_cluster:-false}" == true ]]; then
         echo "  ✓ Local Kubernetes cluster"
     fi
+    echo ""
+    log_info "Namespace information:"
+    echo "  • Operator was in: ${OPERATOR_NAMESPACE}"
+    echo "  • Stacks were in: ${STACK_NAMESPACE}"
     echo ""
     log_warning "Important reminders:"
     echo "  • Check your AWS console to verify all resources are deleted"
@@ -310,12 +394,21 @@ main() {
     log_info "Pulumi Kubernetes Operator AWS Demo Cleanup"
     echo "=============================================="
     
+    # Load environment variables first
+    load_environment
+    
+    # Show current configuration
+    log_info "Current configuration:"
+    echo "  • Operator namespace: ${OPERATOR_NAMESPACE}"
+    echo "  • Stack namespace: ${STACK_NAMESPACE}"
+    echo "  • Cluster name: ${CLUSTER_NAME}"
+    
     confirm_cleanup
     
     log_info "Starting cleanup process..."
     
     # Cleanup in reverse order of creation
-    cleanup_stack
+    cleanup_stacks
     cleanup_kubernetes_resources
     uninstall_operator
     cleanup_namespaces
