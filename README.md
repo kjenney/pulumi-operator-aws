@@ -2,32 +2,6 @@
 
 This project demonstrates how to deploy AWS resources using the Pulumi Kubernetes Operator (PKO) v2.0+ on a local Kubernetes cluster.
 
-> **⚠️ Important:** This project has been updated for Pulumi Kubernetes Operator v2.0+. See [OPERATOR-V2-COMPATIBILITY.md](OPERATOR-V2-COMPATIBILITY.md) for details on the new architecture and breaking changes.
-
-## Project Structure
-
-```
-pulumi-operator-aws/
-├── README.md                          # This file
-├── pulumi-program/                     # Pulumi program for AWS resources
-│   ├── Pulumi.yaml                     # Pulumi project configuration
-│   ├── Pulumi.dev.yaml                 # Stack configuration
-│   ├── index.ts                        # Main Pulumi program
-│   ├── package.json                    # Node.js dependencies
-│   └── tsconfig.json                   # TypeScript configuration
-├── k8s-manifests/                      # Kubernetes manifests
-│   ├── namespace.yaml                  # Namespace for the deployment
-│   ├── aws-secret.yaml                 # AWS credentials secret
-│   ├── pulumi-stack.yaml              # Pulumi Stack CRD
-│   └── pulumi-program-configmap.yaml   # ConfigMap with Pulumi program
-├── scripts/                            # Setup and utility scripts
-│   ├── setup-cluster.sh               # Script to set up local k8s cluster
-│   ├── install-operator.sh            # Script to install Pulumi operator
-│   ├── deploy-stack.sh                 # Script to deploy the stack
-│   └── cleanup.sh                      # Cleanup script
-└── .env.example                        # Environment variables template
-```
-
 ## Prerequisites
 
 1. **Docker** - For running the local Kubernetes cluster
