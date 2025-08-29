@@ -61,9 +61,7 @@ The deployment can be customized by modifying:
 
 ## Monitoring and Troubleshooting
 
-- Check stack status: `kubectl get stack aws-resources -n pulumi-system`
-- View stack details: `kubectl describe stack aws-resources -n pulumi-system`
-- Check operator logs: `kubectl logs -l app.kubernetes.io/name=pulumi-kubernetes-operator -n pulumi-system`
+See `TROUBLESHOOTING.md`.
 
 ## Cleanup
 
