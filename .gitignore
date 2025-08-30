@@ -58,3 +58,5 @@ charts/
 # Temporary scripts
 temp-*
 tmp-*
+
+pulumi-image.tar
