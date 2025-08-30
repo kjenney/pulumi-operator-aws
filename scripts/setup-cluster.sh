@@ -99,6 +99,7 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: ${CLUSTER_NAME}
 nodes:
 - role: control-plane
+  image: kindest/node:v1.33.4@sha256:25a6018e48dfcaee478f4a59af81157a437f15e6e140bf103f85a2e7cd0cbbf2
   extraPortMappings:
   - containerPort: 80
     hostPort: 8080
@@ -113,7 +114,7 @@ nodes:
       kubeletExtraArgs:
         node-labels: "ingress-ready=true"
 - role: worker
-- role: worker
+  image: kindest/node:v1.33.4@sha256:25a6018e48dfcaee478f4a59af81157a437f15e6e140bf103f85a2e7cd0cbbf2
 EOF
     
     # Create the cluster
@@ -154,6 +155,12 @@ install_ingress_controller() {
     log_success "NGINX Ingress Controller installed successfully!"
 }
 
+load_pulumi_image() {
+    log_info "Loading Pulumi image..."
+    kind load docker-image pulumi/pulumi:latest-nonroot --name=${CLUSTER_NAME}
+    log_success "Pulumi image loaded successfully!"
+}
+
 display_cluster_info() {
     log_info "Cluster Information:"
     echo "===================="
@@ -180,6 +187,7 @@ main() {
     create_kind_cluster
     configure_kubectl
     install_ingress_controller
+    load_pulumi_image
     display_cluster_info
     
     log_success "Cluster setup completed successfully!"
@@ -187,7 +195,7 @@ main() {
     log_info "Next steps:"
     echo "1. Run './scripts/install-operator.sh' to install the Pulumi Kubernetes Operator"
     echo "2. Configure your AWS credentials in .env file"
-    echo "3. Run './scripts/deploy-stack.sh' to deploy AWS resources"
+    echo "3. Run './scripts/deploy-helm-chart.sh' to deploy AWS resources"
 }
 
 # Run main function

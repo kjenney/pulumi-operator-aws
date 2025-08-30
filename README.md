@@ -2,7 +2,7 @@
 
 This project demonstrates how to deploy AWS resources using the Pulumi Kubernetes Operator (PKO) v2.0+ on a local Kubernetes cluster.
 
-## 🚀 Quick Start with Helm Chart
+## 🚀 Quick Start
 
 ### Prerequisites
 
@@ -47,10 +47,11 @@ This project demonstrates how to deploy AWS resources using the Pulumi Kubernete
 5. **Monitor the deployment:**
    ```bash
    # Check the stack status
-   kubectl get stack -n pulumi-aws-demo
+   kubectl get stack -A
    
    # View logs
-   kubectl logs -l pulumi.com/stack=aws-resources -n pulumi-aws-demo -f
+   # Get the stack namespace from .env
+   kubectl logs -l auto.pulumi.com/component=workspace -n ${STACK-NAMESPAC} <-- replace namespace
    ```
 
 ### Helm Chart Configuration
@@ -125,18 +126,6 @@ This separation provides:
 - **Multi-tenancy**: Different teams can have their own stack namespaces
 - **Clear separation**: Infrastructure (operator) vs applications (stacks)
 - **Fine-grained RBAC**: Permissions can be controlled per namespace
-
-#### Examples:
-
-```bash
-# Use default namespaces
-./scripts/install-operator.sh
-./scripts/deploy-stack.sh
-
-# Custom namespaces
-OPERATOR_NAMESPACE=my-operator-ns ./scripts/install-operator.sh
-STACK_NAMESPACE=team-a-stacks ./scripts/deploy-stack.sh
-```
 
 ### Resource Configuration
 
@@ -236,4 +225,4 @@ helm uninstall pulumi-aws-demo -n pulumi-aws-demo
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License.

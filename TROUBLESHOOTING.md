@@ -259,5 +259,5 @@ docker system prune -a
 ./scripts/install-operator.sh
 cp .env.example .env
 # Edit .env with your credentials
-./scripts/deploy-stack.sh
+./scripts/deploy-helm-chart.sh
 ```

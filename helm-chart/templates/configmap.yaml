@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Values.configMap.name }}
-  namespace: {{ .Values.operatorNamespace }}
+  namespace: {{ .Values.global.namespace.name }}
   labels:
     {{- include "pulumi-operator-aws.labels" . | nindent 4 }}
 data:

@@ -20,9 +20,18 @@ spec:
   {{- end }}
   
   {{- if .Values.pulumi.stack.useConfigMap }}
-  # Use ConfigMap instead of Git repository
-  programRef:
-    name: {{ .Values.configMap.name }}
+  # Mount ConfigMap files as volumes in workspace pod  
+  workspaceTemplate:
+    spec:
+      containers:
+        - name: pulumi
+          volumeMounts:
+            - name: program-files
+              mountPath: /pulumi/projects/{{ .Values.pulumi.project.name }}
+      volumes:
+        - name: program-files
+          configMap:
+            name: {{ .Values.configMap.name }}
   {{- end }}
   
   # Environment variables for AWS and Pulumi Cloud
