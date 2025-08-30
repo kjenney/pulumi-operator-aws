@@ -60,20 +60,7 @@ The Helm chart can be configured in two ways:
 
 #### Option 1: Using .env File (Recommended)
 
-The deployment script automatically reads from `.env` file:
-
-```bash
-# .env file example
-AWS_ACCESS_KEY_ID=AKIA1234567890EXAMPLE
-AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-AWS_REGION=us-west-2
-PULUMI_ACCESS_TOKEN=pul-1234567890abcdefghijklmnopqrstuvwxyz
-
-PROJECT_NAME=my-awesome-project
-STACK_NAME=production
-STACK_NAMESPACE=my-awesome-project-prod
-OPERATOR_NAMESPACE=pulumi-system
-```
+The deployment script automatically reads from `.env` file. See `.env.example` for the format.
 
 #### Option 2: Using values.yaml File
 
