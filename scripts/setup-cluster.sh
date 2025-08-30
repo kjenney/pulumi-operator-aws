@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 CLUSTER_NAME="${CLUSTER_NAME:-pulumi-aws-demo}"
-KIND_VERSION="${KIND_VERSION:-v0.20.0}"
+KIND_VERSION="${KIND_VERSION:-v0.30.0}"
 
 # Functions
 log_info() {
@@ -99,7 +99,6 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: ${CLUSTER_NAME}
 nodes:
 - role: control-plane
-  image: kindest/node:v1.33.4@sha256:25a6018e48dfcaee478f4a59af81157a437f15e6e140bf103f85a2e7cd0cbbf2
   extraPortMappings:
   - containerPort: 80
     hostPort: 8080
@@ -113,8 +112,6 @@ nodes:
     nodeRegistration:
       kubeletExtraArgs:
         node-labels: "ingress-ready=true"
-- role: worker
-  image: kindest/node:v1.33.4@sha256:25a6018e48dfcaee478f4a59af81157a437f15e6e140bf103f85a2e7cd0cbbf2
 EOF
     
     # Create the cluster
@@ -157,7 +154,8 @@ install_ingress_controller() {
 
 load_pulumi_image() {
     log_info "Loading Pulumi image..."
-    kind load docker-image pulumi/pulumi:latest-nonroot --name=${CLUSTER_NAME}
+    docker cp pulumi-image.tar ${CLUSTER_NAME}-control-plane:/pulumi-image.tar
+    docker exec ${CLUSTER_NAME}-control-plane ctr -n k8s.io images import /pulumi-image.tar
     log_success "Pulumi image loaded successfully!"
 }
 

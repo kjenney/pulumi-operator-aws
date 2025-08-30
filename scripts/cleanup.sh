@@ -43,6 +43,18 @@ log_error() {
 find_operator_namespace() {
     local namespaces=("${OPERATOR_NAMESPACE}" "pulumi-system" "pulumi-kubernetes-operator")
     
+    # Check if kubectl is available
+    if ! command -v kubectl &> /dev/null; then
+        log_error "kubectl not found. Please ensure kubectl is installed and configured."
+        return 1
+    fi
+    
+    # Check if we can connect to the cluster
+    if ! kubectl cluster-info &> /dev/null; then
+        log_warning "Cannot connect to Kubernetes cluster. Skipping operator namespace detection."
+        return 1
+    fi
+    
     for ns in "${namespaces[@]}"; do
         if kubectl get deployment pulumi-kubernetes-operator-controller-manager -n ${ns} &> /dev/null; then
             echo "$ns"
@@ -54,6 +66,20 @@ find_operator_namespace() {
 }
 
 find_stack_namespaces() {
+    # Check if kubectl is available and cluster is accessible
+    if ! command -v kubectl &> /dev/null; then
+        return 1
+    fi
+    
+    if ! kubectl cluster-info &> /dev/null; then
+        return 1
+    fi
+    
+    # Check if Stack CRD exists
+    if ! kubectl get crd stacks.pulumi.com &> /dev/null; then
+        return 1
+    fi
+    
     # Look for stacks in all namespaces and return a list
     kubectl get stacks --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' | sort -u
 }
@@ -119,6 +145,23 @@ confirm_cleanup() {
 
 cleanup_stacks() {
     log_info "Cleaning up Pulumi stacks..."
+    
+    # Check if kubectl is available and cluster is accessible
+    if ! command -v kubectl &> /dev/null; then
+        log_warning "kubectl not found. Skipping stack cleanup."
+        return 0
+    fi
+    
+    if ! kubectl cluster-info &> /dev/null; then
+        log_warning "Cannot connect to Kubernetes cluster. Skipping stack cleanup."
+        return 0
+    fi
+    
+    # Check if Stack CRD exists
+    if ! kubectl get crd stacks.pulumi.com &> /dev/null; then
+        log_info "Stack CRD not found. No Pulumi stacks to clean up."
+        return 0
+    fi
     
     # Find all stack namespaces
     local stack_namespaces
@@ -200,6 +243,17 @@ cleanup_stacks() {
 cleanup_kubernetes_resources() {
     log_info "Cleaning up Kubernetes resources..."
     
+    # Check if kubectl is available and cluster is accessible
+    if ! command -v kubectl &> /dev/null; then
+        log_warning "kubectl not found. Skipping Kubernetes resource cleanup."
+        return 0
+    fi
+    
+    if ! kubectl cluster-info &> /dev/null; then
+        log_warning "Cannot connect to Kubernetes cluster. Skipping Kubernetes resource cleanup."
+        return 0
+    fi
+    
     # Get all namespaces that might contain our resources
     local namespaces
     namespaces=$(echo -e "${STACK_NAMESPACE}\n${OPERATOR_NAMESPACE}\npulumi-system\npulumi-kubernetes-operator\n${STACK_NAMESPACE}" | sort -u)
@@ -209,29 +263,56 @@ cleanup_kubernetes_resources() {
         if kubectl get namespace ${ns} &> /dev/null; then
             log_info "Cleaning up resources in namespace: $ns"
             
-            # Delete ConfigMaps
-            kubectl delete configmap pulumi-program -n ${ns} --ignore-not-found=true
+            # Delete ConfigMaps (only if they exist)
+            if kubectl get configmap pulumi-program -n ${ns} &> /dev/null; then
+                kubectl delete configmap pulumi-program -n ${ns} --ignore-not-found=true
+            fi
             
-            # Delete Secrets
-            kubectl delete secret aws-credentials -n ${ns} --ignore-not-found=true
-            kubectl delete secret pulumi-access-token -n ${ns} --ignore-not-found=true
+            # Delete Secrets (only if they exist)
+            if kubectl get secret aws-credentials -n ${ns} &> /dev/null; then
+                kubectl delete secret aws-credentials -n ${ns} --ignore-not-found=true
+            fi
+            if kubectl get secret pulumi-access-token -n ${ns} &> /dev/null; then
+                kubectl delete secret pulumi-access-token -n ${ns} --ignore-not-found=true
+            fi
             
-            # Delete Service Accounts
-            kubectl delete serviceaccount pulumi -n ${ns} --ignore-not-found=true
+            # Delete Service Accounts (only if they exist)
+            if kubectl get serviceaccount pulumi -n ${ns} &> /dev/null; then
+                kubectl delete serviceaccount pulumi -n ${ns} --ignore-not-found=true
+            fi
+        else
+            log_info "Namespace $ns does not exist, skipping..."
         fi
     done <<< "$namespaces"
     
-    # Delete ClusterRole and ClusterRoleBinding
+    # Delete ClusterRole and ClusterRoleBinding (only if they exist)
     log_info "Cleaning up cluster-wide RBAC resources..."
-    kubectl delete clusterrole pulumi-stack-manager --ignore-not-found=true
-    kubectl delete clusterrolebinding pulumi-stack-manager --ignore-not-found=true
-    kubectl delete clusterrolebinding pulumi:system:auth-delegator --ignore-not-found=true
+    if kubectl get clusterrole pulumi-stack-manager &> /dev/null; then
+        kubectl delete clusterrole pulumi-stack-manager --ignore-not-found=true
+    fi
+    if kubectl get clusterrolebinding pulumi-stack-manager &> /dev/null; then
+        kubectl delete clusterrolebinding pulumi-stack-manager --ignore-not-found=true
+    fi
+    if kubectl get clusterrolebinding pulumi:system:auth-delegator &> /dev/null; then
+        kubectl delete clusterrolebinding pulumi:system:auth-delegator --ignore-not-found=true
+    fi
     
     log_success "Kubernetes resources cleaned up!"
 }
 
 uninstall_operator() {
     log_info "Uninstalling Pulumi Kubernetes Operator..."
+    
+    # Check if kubectl is available and cluster is accessible
+    if ! command -v kubectl &> /dev/null; then
+        log_warning "kubectl not found. Skipping operator uninstall."
+        return 0
+    fi
+    
+    if ! kubectl cluster-info &> /dev/null; then
+        log_warning "Cannot connect to Kubernetes cluster. Skipping operator uninstall."
+        return 0
+    fi
     
     # Find the operator namespace
     local operator_ns
@@ -260,18 +341,31 @@ uninstall_operator() {
     kubectl delete configmap -n ${operator_ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator --ignore-not-found=true
     kubectl delete secret -n ${operator_ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator --ignore-not-found=true
     
-    # Delete CRDs
+    # Delete CRDs (only if they exist)
     log_info "Deleting Pulumi CRDs..."
-    kubectl delete crd stacks.pulumi.com --ignore-not-found=true
-    kubectl delete crd workspaces.pulumi.com --ignore-not-found=true
-    kubectl delete crd programs.pulumi.com --ignore-not-found=true
-    kubectl delete crd updates.pulumi.com --ignore-not-found=true
+    local crds=("stacks.pulumi.com" "workspaces.pulumi.com" "programs.pulumi.com" "updates.pulumi.com")
+    for crd in "${crds[@]}"; do
+        if kubectl get crd ${crd} &> /dev/null; then
+            kubectl delete crd ${crd} --ignore-not-found=true
+        fi
+    done
     
     log_success "Pulumi Kubernetes Operator uninstalled!"
 }
 
 cleanup_namespaces() {
     log_info "Cleaning up namespaces..."
+    
+    # Check if kubectl is available and cluster is accessible
+    if ! command -v kubectl &> /dev/null; then
+        log_warning "kubectl not found. Skipping namespace cleanup."
+        return 0
+    fi
+    
+    if ! kubectl cluster-info &> /dev/null; then
+        log_warning "Cannot connect to Kubernetes cluster. Skipping namespace cleanup."
+        return 0
+    fi
     
     # List of namespaces to potentially delete
     local namespaces_to_delete=("${STACK_NAMESPACE}")
@@ -312,6 +406,18 @@ cleanup_namespaces() {
 cleanup_cluster() {
     local delete_cluster=false
     
+    # Check if kind is available
+    if ! command -v kind &> /dev/null; then
+        log_info "kind not found. Skipping cluster cleanup."
+        return 0
+    fi
+    
+    # Check if the cluster exists
+    if ! kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+        log_info "Cluster '${CLUSTER_NAME}' not found. Skipping cluster cleanup."
+        return 0
+    fi
+    
     echo ""
     read -p "Do you want to delete the local Kubernetes cluster? (y/N): " -n 1 -r
     echo
@@ -322,15 +428,11 @@ cleanup_cluster() {
     if [[ "$delete_cluster" == true ]]; then
         log_info "Deleting local Kubernetes cluster..."
         
-        if command -v kind &> /dev/null; then
-            if kind get clusters | grep -q "^${CLUSTER_NAME}$"; then
-                kind delete cluster --name="${CLUSTER_NAME}"
-                log_success "Kubernetes cluster deleted successfully!"
-            else
-                log_info "Cluster '${CLUSTER_NAME}' not found, skipping..."
-            fi
+        if kind get clusters | grep -q "^${CLUSTER_NAME}$"; then
+            kind delete cluster --name="${CLUSTER_NAME}"
+            log_success "Kubernetes cluster deleted successfully!"
         else
-            log_warning "kind not found. Please manually delete your cluster if needed."
+            log_info "Cluster '${CLUSTER_NAME}' not found, skipping..."
         fi
     else
         log_info "Keeping Kubernetes cluster..."
