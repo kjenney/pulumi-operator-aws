@@ -20,18 +20,22 @@ spec:
   {{- end }}
   
   {{- if .Values.pulumi.stack.useConfigMap }}
-  # Mount ConfigMap files as volumes in workspace pod  
+  # Reference the ConfigMap containing the Pulumi program
+  programRef:
+    name: {{ .Values.configMap.name }}
+    
+  # Mount ConfigMap files in the workspace pod
   workspaceTemplate:
     spec:
-      containers:
-        - name: pulumi
-          volumeMounts:
-            - name: program-files
-              mountPath: /pulumi/projects/{{ .Values.pulumi.project.name }}
       volumes:
         - name: program-files
           configMap:
             name: {{ .Values.configMap.name }}
+      containers:
+        - name: pulumi
+          volumeMounts:
+            - name: program-files
+              mountPath: /share/workspace
   {{- end }}
   
   # Environment variables for AWS and Pulumi Cloud

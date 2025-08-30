@@ -152,13 +152,6 @@ See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for detailed troubleshooting guid
 
 ## 🧹 Cleanup
 
-### Helm Chart Cleanup
-```bash
-# Uninstall Helm release (automatically destroys AWS resources)
-helm uninstall pulumi-aws-demo -n pulumi-aws-demo
-```
-
-### Cleanup the rest
 ```bash
 # Use the cleanup script
 ./scripts/cleanup.sh

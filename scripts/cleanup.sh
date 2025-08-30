@@ -21,6 +21,7 @@ if [[ -n "${NAMESPACE:-}" ]]; then
 fi
 CLUSTER_NAME="${CLUSTER_NAME:-pulumi-aws-demo}"
 STACK_NAME="${STACK_NAME:-aws-resources}"
+PROJECT_NAME="${PROJECT_NAME:-aws-resources}"
 
 # Functions
 log_info() {
@@ -58,23 +59,41 @@ find_stack_namespaces() {
 }
 
 load_environment() {
-    # Load environment if .env file exists
+    # Get the directory where this script is located
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local env_file="${script_dir}/../.env"
+    
+    # Also check for .env in current directory
     if [[ -f ".env" ]]; then
-        log_info "Loading environment from .env file..."
+        env_file=".env"
+    fi
+    
+    # Load environment if .env file exists
+    if [[ -f "$env_file" ]]; then
+        log_info "Loading environment from: $env_file"
         set -a
-        source .env 2>/dev/null || true
+        source "$env_file" 2>/dev/null || true
         set +a
         
-        # Update namespaces from environment
+        # Update all variables from environment with fallbacks
         OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-pulumi-system}"
         STACK_NAMESPACE="${STACK_NAMESPACE:-pulumi-aws-demo}"
+        CLUSTER_NAME="${CLUSTER_NAME:-pulumi-aws-demo}"
+        STACK_NAME="${STACK_NAME:-aws-resources}"
+        PROJECT_NAME="${PROJECT_NAME:-aws-resources}"
         
         # Handle legacy NAMESPACE variable
         if [[ -n "${NAMESPACE:-}" ]]; then
             STACK_NAMESPACE="$NAMESPACE"
         fi
         
-        log_info "Using namespaces: operator=${OPERATOR_NAMESPACE}, stack=${STACK_NAMESPACE}"
+        log_info "Configuration loaded from .env:"
+        log_info "  • Operator namespace: ${OPERATOR_NAMESPACE}"
+        log_info "  • Stack namespace: ${STACK_NAMESPACE}"
+        log_info "  • Cluster name: ${CLUSTER_NAME}"
+        log_info "  • Project name: ${PROJECT_NAME}"
+    else
+        log_info "No .env file found, using default configuration"
     fi
 }
 
@@ -183,7 +202,7 @@ cleanup_kubernetes_resources() {
     
     # Get all namespaces that might contain our resources
     local namespaces
-    namespaces=$(echo -e "${STACK_NAMESPACE}\n${OPERATOR_NAMESPACE}\npulumi-system\npulumi-kubernetes-operator\npulumi-aws-demo" | sort -u)
+    namespaces=$(echo -e "${STACK_NAMESPACE}\n${OPERATOR_NAMESPACE}\npulumi-system\npulumi-kubernetes-operator\n${STACK_NAMESPACE}" | sort -u)
     
     while IFS= read -r ns; do
         [[ -n "$ns" ]] || continue
@@ -255,7 +274,7 @@ cleanup_namespaces() {
     log_info "Cleaning up namespaces..."
     
     # List of namespaces to potentially delete
-    local namespaces_to_delete=("${STACK_NAMESPACE}" "pulumi-aws-demo")
+    local namespaces_to_delete=("${STACK_NAMESPACE}")
     
     # Only delete operator namespace if it's not a system namespace
     if [[ "${OPERATOR_NAMESPACE}" != "kube-system" ]] && [[ "${OPERATOR_NAMESPACE}" != "default" ]]; then
@@ -327,7 +346,7 @@ verify_aws_cleanup() {
         
         # Check for S3 buckets
         local buckets
-        buckets=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'pulumi-aws-demo')].Name" --output text 2>/dev/null || echo "")
+        buckets=$(aws s3api list-buckets --query "Buckets[?contains(Name, '${PROJECT_NAME}')].Name" --output text 2>/dev/null || echo "")
         
         if [[ -n "$buckets" ]]; then
             log_warning "Found remaining S3 buckets: $buckets"
@@ -339,7 +358,7 @@ verify_aws_cleanup() {
         
         # Check for VPCs
         local vpcs
-        vpcs=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=pulumi-aws-demo" --query "Vpcs[].VpcId" --output text 2>/dev/null || echo "")
+        vpcs=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=${PROJECT_NAME}" --query "Vpcs[].VpcId" --output text 2>/dev/null || echo "")
         
         if [[ -n "$vpcs" ]]; then
             log_warning "Found remaining VPCs: $vpcs"
@@ -350,7 +369,7 @@ verify_aws_cleanup() {
         
         # Check for IAM roles
         local roles
-        roles=$(aws iam list-roles --query "Roles[?contains(RoleName, 'pulumi-aws-demo')].RoleName" --output text 2>/dev/null || echo "")
+        roles=$(aws iam list-roles --query "Roles[?contains(RoleName, '${PROJECT_NAME}')].RoleName" --output text 2>/dev/null || echo "")
         
         if [[ -n "$roles" ]]; then
             log_warning "Found remaining IAM roles: $roles"
@@ -396,12 +415,6 @@ main() {
     
     # Load environment variables first
     load_environment
-    
-    # Show current configuration
-    log_info "Current configuration:"
-    echo "  • Operator namespace: ${OPERATOR_NAMESPACE}"
-    echo "  • Stack namespace: ${STACK_NAMESPACE}"
-    echo "  • Cluster name: ${CLUSTER_NAME}"
     
     confirm_cleanup
     
