@@ -38,7 +38,7 @@ pulumi:
     token: ""
   
   # Pulumi image for workspace
-  image: "pulumi/pulumi-nodejs:latest"
+  image: "pulumi/pulumi:latest-nonroot"
   
   # Pulumi project configuration
   project:
