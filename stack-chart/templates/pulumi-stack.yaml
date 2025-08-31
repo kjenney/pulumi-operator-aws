@@ -48,7 +48,12 @@ spec:
               emptyDir: {}
             {{- if .Values.pulumi.backend.useLocal }}
             - name: backend-storage
+              {{- if .Values.pulumi.backend.persistence.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "pulumi-operator-aws.fullname" . }}-backend-storage
+              {{- else }}
               emptyDir: {}
+              {{- end }}
             {{- end }}
           containers:
             - name: pulumi

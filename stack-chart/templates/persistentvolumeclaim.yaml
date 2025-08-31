@@ -1,0 +1,39 @@
+{{- if and .Values.pulumi.backend.useLocal .Values.pulumi.backend.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "pulumi-operator-aws.fullname" . }}-backend-storage
+  namespace: {{ .Values.global.namespace.name }}
+  labels:
+    {{- include "pulumi-operator-aws.labels" . | nindent 4 }}
+    component: backend-storage
+  annotations:
+    {{- if .Values.pulumi.backend.persistence.annotations }}
+    {{- toYaml .Values.pulumi.backend.persistence.annotations | nindent 4 }}
+    {{- end }}
+    # Helm annotations for lifecycle management
+    "helm.sh/resource-policy": keep
+spec:
+  accessModes:
+    {{- range .Values.pulumi.backend.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- if .Values.pulumi.backend.persistence.storageClass }}
+  {{- if (eq "-" .Values.pulumi.backend.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.pulumi.backend.persistence.storageClass | quote }}
+  {{- end }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.pulumi.backend.persistence.size | quote }}
+  {{- if .Values.pulumi.backend.persistence.selector }}
+  selector:
+    {{- toYaml .Values.pulumi.backend.persistence.selector | nindent 4 }}
+  {{- end }}
+  {{- if .Values.pulumi.backend.persistence.dataSource }}
+  dataSource:
+    {{- toYaml .Values.pulumi.backend.persistence.dataSource | nindent 4 }}
+  {{- end }}
+{{- end }}

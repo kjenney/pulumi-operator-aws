@@ -33,6 +33,29 @@ pulumi:
     useLocal: true
     # Passphrase for encrypting secrets in local backend
     passphrase: "local-backend-passphrase"
+    
+    # Persistence configuration for local backend
+    persistence:
+      # Enable persistent storage for backend state
+      enabled: true
+      # Storage class for the persistent volume
+      # Use "" for default storage class, or specify a custom storage class
+      storageClass: ""
+      # Size of the persistent volume
+      size: "10Gi"
+      # Access modes for the persistent volume
+      accessModes:
+        - ReadWriteOnce
+      # Additional annotations for the PVC
+      annotations:
+        # Add any storage-specific annotations here
+        # Example for AWS EBS:
+        # volume.beta.kubernetes.io/storage-class: "gp3"
+        # volume.kubernetes.io/storage-provisioner: "ebs.csi.aws.com"
+      # Optional: Selector to bind to a specific PV
+      selector: {}
+      # Optional: DataSource for volume cloning/restoration
+      dataSource: {}
   
   # Pulumi access token secret (only needed when useLocal is false)
   accessToken:
@@ -120,16 +143,16 @@ resources:
   iam:
     # Create IAM role for EC2 instances
     ec2Role:
-      enabled: true
+      enabled: false
     # Create IAM policy for S3 access
     s3Policy:
-      enabled: true
+      enabled: false
     # Attach S3 policy to EC2 role
     rolePolicyAttachment:
-      enabled: true
+      enabled: false
     # Create instance profile for EC2 role
     instanceProfile:
-      enabled: true
+      enabled: false
 
 # Service Account Configuration
 serviceAccount:
