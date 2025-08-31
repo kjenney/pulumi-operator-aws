@@ -226,7 +226,7 @@ display_next_steps() {
     fi
     echo ""
     echo "3. Deploy AWS resources using the operator:"
-    echo "   ./scripts/deploy-helm-chart.sh"
+    echo "   ./scripts/deploy-stack.sh"
     echo ""
     log_info "Useful commands:"
     echo "- Check operator status: kubectl get deployment pulumi-kubernetes-operator-controller-manager -n ${OPERATOR_NAMESPACE}"

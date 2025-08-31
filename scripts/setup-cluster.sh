@@ -238,7 +238,7 @@ main() {
     log_info "Next steps:"
     echo "1. Run './scripts/install-operator.sh' to install the Pulumi Kubernetes Operator"
     echo "2. Configure your AWS credentials in .env file"
-    echo "3. Run './scripts/deploy-helm-chart.sh' to deploy AWS resources"
+    echo "3. Run './scripts/deploy-stack.sh' to deploy AWS resources"
 }
 
 # Show usage information

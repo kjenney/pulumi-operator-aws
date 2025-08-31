@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Default values
-CHART_PATH="./helm-chart"
+CHART_PATH="./stack-chart"
 RELEASE_NAME="pulumi-aws-demo"
 NAMESPACE="pulumi-aws-demo"
 VALUES_FILE=""

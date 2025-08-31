@@ -39,13 +39,13 @@ The Pulumi container image is rather large, so to speed up the loading of stack 
 4. **Deploy using Helm:**
    ```bash
    # Basic deployment (uses .env file automatically)
-   ./scripts/deploy-helm-chart.sh
+   ./scripts/deploy-stack.sh
    
    # Test first with dry run
-   ./scripts/deploy-helm-chart.sh --dry-run
+   ./scripts/deploy-stack.sh --dry-run
    
    # Or with custom values and different env file
-   ./scripts/deploy-helm-chart.sh -f helm-chart/values-example.yaml --env-file .env.prod
+   ./scripts/deploy-stack.sh -f helm-chart/values-example.yaml --env-file .env.prod
    ```
 
 5. **Monitor the deployment:**
