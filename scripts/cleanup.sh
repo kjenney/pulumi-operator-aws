@@ -216,66 +216,6 @@ cleanup_stacks() {
             done <<< "$stacks"
         fi
         
-        # First, explicitly delete any stacks before Helm uninstall
-        stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | awk '{print $1}' || true)
-        if [[ -n "$stacks" ]]; then
-            log_info "Deleting stacks before Helm uninstall to ensure proper AWS resource cleanup..."
-            while IFS= read -r stack_name; do
-                [[ -n "$stack_name" ]] || continue
-                log_info "Deleting stack ${stack_name} in namespace ${stack_ns}..."
-                
-                # Delete the stack and let the operator handle the finalization
-                kubectl delete stack ${stack_name} -n ${stack_ns} --timeout=1200s 2>/dev/null || {
-                    log_warning "Stack deletion timed out for ${stack_name}, checking status..."
-                    
-                    # Check if stack is in destroying state
-                    local stack_status
-                    stack_status=$(kubectl get stack ${stack_name} -n ${stack_ns} -o jsonpath='{.status.lastUpdate.state}' 2>/dev/null || echo "not found")
-                    
-                    if [[ "$stack_status" == "destroying" ]]; then
-                        log_info "Stack ${stack_name} is being destroyed, waiting for completion..."
-                        # Wait longer for destroy to complete
-                        local extended_timeout=1800  # 30 minutes
-                        local check_interval=30
-                        local extended_elapsed=0
-                        
-                        while [[ $extended_elapsed -lt $extended_timeout ]]; do
-                            if ! kubectl get stack ${stack_name} -n ${stack_ns} &>/dev/null; then
-                                log_success "Stack ${stack_name} successfully destroyed"
-                                break
-                            fi
-                            
-                            stack_status=$(kubectl get stack ${stack_name} -n ${stack_ns} -o jsonpath='{.status.lastUpdate.state}' 2>/dev/null || echo "not found")
-                            log_info "Stack ${stack_name} destroy in progress... (${extended_elapsed}s elapsed, status: ${stack_status})"
-                            
-                            if [[ "$stack_status" == "failed" ]]; then
-                                log_error "Stack ${stack_name} destruction failed. Check the workspace pod logs for details."
-                                # Show recent logs from workspace pod if available
-                                local workspace_pod
-                                workspace_pod=$(kubectl get pods -n ${stack_ns} -l "pulumi.com/stack-name=${stack_name}" --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-                                if [[ -n "$workspace_pod" ]]; then
-                                    log_info "Recent logs from workspace pod ${workspace_pod}:"
-                                    kubectl logs ${workspace_pod} -n ${stack_ns} --tail=20 2>/dev/null || true
-                                fi
-                                break
-                            fi
-                            
-                            sleep $check_interval
-                            extended_elapsed=$((extended_elapsed + check_interval))
-                        done
-                        
-                        # If still exists after extended timeout, log error but continue
-                        if kubectl get stack ${stack_name} -n ${stack_ns} &>/dev/null; then
-                            log_error "Stack ${stack_name} cleanup timed out. AWS resources may still exist."
-                            log_error "Check AWS console and consider manual cleanup."
-                        fi
-                    else
-                        log_warning "Stack ${stack_name} status: ${stack_status}"
-                    fi
-                }
-            done <<< "$stacks"
-        fi
-        
         # Now handle Helm releases after stacks are deleted
         if command -v helm &> /dev/null; then
             log_info "Checking for Helm releases in namespace ${stack_ns}..."
@@ -493,6 +433,26 @@ cleanup_namespaces() {
     log_success "Namespaces cleaned up!"
 }
 
+confirm_operator_deletion() {
+    echo ""
+    log_info "Pulumi Stack cleanup completed successfully."
+    log_warning "The Pulumi Kubernetes Operator is still running and can manage other stacks."
+    echo ""
+    echo "Do you want to uninstall the Pulumi Kubernetes Operator as well?"
+    echo "  • Choose 'yes' if you're done with all Pulumi operations on this cluster"
+    echo "  • Choose 'no' if you want to keep the operator for other stacks"
+    echo ""
+    read -p "Uninstall the Pulumi Kubernetes Operator? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        return 0  # Proceed with operator uninstall
+    else
+        log_info "Keeping Pulumi Kubernetes Operator running..."
+        log_info "You can uninstall it later by running this script again or using Helm directly."
+        return 1  # Skip operator uninstall
+    fi
+}
+
 cleanup_cluster() {
     local delete_cluster=false
     
@@ -583,16 +543,33 @@ display_cleanup_summary() {
     echo "  ✓ Pulumi stacks and AWS resources"
     echo "  ✓ Kubernetes secrets and configmaps"
     echo "  ✓ RBAC resources (ClusterRoles and ClusterRoleBindings)"
-    echo "  ✓ Pulumi Kubernetes Operator"
-    echo "  ✓ Kubernetes namespaces"
+    
+    # Show operator status based on what was actually done
+    if [[ "${operator_uninstalled:-false}" == true ]]; then
+        echo "  ✓ Pulumi Kubernetes Operator"
+        echo "  ✓ Kubernetes namespaces"
+    else
+        echo "  • Pulumi Kubernetes Operator (kept running)"
+        echo "  • Kubernetes namespaces (kept for operator)"
+    fi
+    
     if [[ "${delete_cluster:-false}" == true ]]; then
         echo "  ✓ Local Kubernetes cluster"
     fi
     echo ""
     log_info "Namespace information:"
-    echo "  • Operator was in: ${OPERATOR_NAMESPACE}"
-    echo "  • Stacks were in: ${STACK_NAMESPACE}"
+    echo "  • Operator namespace: ${OPERATOR_NAMESPACE}"
+    echo "  • Stack namespace: ${STACK_NAMESPACE}"
     echo ""
+    
+    if [[ "${operator_uninstalled:-false}" != true ]]; then
+        log_info "Pulumi Kubernetes Operator is still running:"
+        echo "  • The operator can manage other Pulumi stacks"
+        echo "  • To uninstall it later, run this script again"
+        echo "  • Or use: helm uninstall pulumi-kubernetes-operator -n ${OPERATOR_NAMESPACE}"
+        echo ""
+    fi
+    
     log_warning "Important reminders:"
     echo "  • Check your AWS console to verify all resources are deleted"
     echo "  • Review your AWS bill to ensure no unexpected charges"
@@ -615,8 +592,18 @@ main() {
     # Cleanup in reverse order of creation
     cleanup_stacks
     cleanup_kubernetes_resources
-    uninstall_operator
-    cleanup_namespaces
+    
+    # Ask user if they want to uninstall the operator
+    if confirm_operator_deletion; then
+        uninstall_operator
+        cleanup_namespaces
+        operator_uninstalled=true
+    else
+        log_info "Skipping operator uninstall and namespace cleanup..."
+        log_info "Note: Operator and stack namespaces will remain."
+        operator_uninstalled=false
+    fi
+    
     cleanup_cluster
     verify_aws_cleanup
     display_cleanup_summary
