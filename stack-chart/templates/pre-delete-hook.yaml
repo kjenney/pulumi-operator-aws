@@ -1,0 +1,105 @@
+{{- if .Values.global.enablePreDeleteHook }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "pulumi-operator-aws.fullname" . }}-pre-delete
+  namespace: {{ .Values.global.namespace.name }}
+  labels:
+    {{- include "pulumi-operator-aws.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      name: {{ include "pulumi-operator-aws.fullname" . }}-pre-delete
+      labels:
+        {{- include "pulumi-operator-aws.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ .Values.pulumi.stack.serviceAccountName | quote }}
+      containers:
+      - name: wait-for-stack-deletion
+        image: bitnami/kubectl:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Pre-delete hook: Ensuring Stack resources are properly deleted..."
+          
+          # Function to get stack details
+          get_stacks() {
+            kubectl get stacks -n {{ .Values.global.namespace.name }} --no-headers 2>/dev/null || echo ""
+          }
+          
+          # Function to check if any stacks still exist
+          check_stacks_exist() {
+            get_stacks | wc -l
+          }
+          
+          # Function to delete stacks if they exist
+          delete_stacks() {
+            local stacks
+            stacks=$(get_stacks | awk '{print $1}')
+            
+            if [ -n "$stacks" ]; then
+              echo "Initiating deletion of Stack resources..."
+              while IFS= read -r stack_name; do
+                if [ -n "$stack_name" ]; then
+                  echo "Deleting stack: $stack_name"
+                  kubectl delete stack "$stack_name" -n {{ .Values.global.namespace.name }} --ignore-not-found=true &
+                fi
+              done <<< "$stacks"
+              wait # Wait for all delete operations to start
+            fi
+          }
+          
+          # First, trigger deletion of any existing stacks
+          INITIAL_STACKS=$(check_stacks_exist)
+          if [ "$INITIAL_STACKS" -gt 0 ]; then
+            echo "Found $INITIAL_STACKS Stack resources, initiating deletion..."
+            delete_stacks
+          else
+            echo "No Stack resources found, proceeding..."
+            exit 0
+          fi
+          
+          # Wait for stacks to be fully deleted with timeout
+          TIMEOUT=1800  # 30 minutes
+          INTERVAL=15   # Check every 15 seconds
+          ELAPSED=0
+          
+          echo "Waiting for Stack resources to be completely removed..."
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            STACK_COUNT=$(check_stacks_exist)
+            
+            if [ "$STACK_COUNT" -eq 0 ]; then
+              echo "All Stack resources have been successfully deleted"
+              exit 0
+            fi
+            
+            echo "Still waiting for $STACK_COUNT Stack resources to be deleted... (${ELAPSED}s elapsed)"
+            
+            # Show stack status for debugging
+            echo "Current stack status:"
+            kubectl get stacks -n {{ .Values.global.namespace.name }} -o custom-columns="NAME:.metadata.name,STATUS:.status.lastUpdate.state,AGE:.metadata.creationTimestamp" 2>/dev/null || true
+            
+            # Check for stacks that might be stuck
+            if [ $ELAPSED -gt 300 ]; then  # After 5 minutes, show more details
+              echo "Stack details (after 5+ minutes):"
+              kubectl describe stacks -n {{ .Values.global.namespace.name }} 2>/dev/null || true
+            fi
+            
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          
+          echo "ERROR: Timeout reached while waiting for Stack resources to be deleted"
+          echo "Remaining stacks after $TIMEOUT seconds:"
+          kubectl get stacks -n {{ .Values.global.namespace.name }} -o wide 2>/dev/null || true
+          echo ""
+          echo "WARNING: Proceeding with Helm uninstall, but AWS resources may still exist"
+          echo "Please check your AWS console and workspace pod logs for cleanup status"
+          exit 0  # Don't fail the hook, just warn
+{{- end }}
