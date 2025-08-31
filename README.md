@@ -2,6 +2,10 @@
 
 This project demonstrates how to deploy AWS resources using the Pulumi Kubernetes Operator (PKO) v2.0+ on a local Kubernetes cluster. This project uses a **local backend** for Pulumi to eliminate external dependencies and ensure repeatability.
 
+## Unicorns
+
+To speed up the loading of stack resources a Pulumi container image is loaded into the Kubernetes cluster on creation. The file name is pulumi-image.tar.
+
 ## 🚀 Quick Start
 
 ### Prerequisites

@@ -12,10 +12,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-CLUSTER_NAME="${CLUSTER_NAME:-pulumi-aws-demo}"
-KIND_VERSION="${KIND_VERSION:-v0.30.0}"
-
 # Functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -31,6 +27,42 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+load_env_file() {
+    local env_file="${ENV_FILE:-.env}"
+    if [[ -f "$env_file" ]]; then
+        log_info "Loading environment variables from $env_file"
+        # Read the .env file and export variables
+        while IFS= read -r line || [ -n "$line" ]; do
+            # Skip empty lines and comments
+            if [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]]; then
+                continue
+            fi
+            
+            # Remove inline comments and trim whitespace
+            line=$(echo "$line" | sed 's/[[:space:]]*#.*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+            
+            # Skip if line is empty after processing
+            if [[ -z "$line" ]]; then
+                continue
+            fi
+            
+            # Export the variable if it contains =
+            if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+                export "$line"
+                # Extract variable name for logging (without value for security)
+                var_name=$(echo "$line" | cut -d'=' -f1)
+                if [[ "$var_name" =~ (ACCESS_KEY|SECRET|TOKEN|PASSWORD) ]]; then
+                    log_info "Loaded $var_name=***"
+                else
+                    log_info "Loaded $line"
+                fi
+            fi
+        done < "$env_file"
+    else
+        log_warning "Environment file $env_file not found. Using default values."
+    fi
 }
 
 check_prerequisites() {
@@ -153,10 +185,14 @@ install_ingress_controller() {
 }
 
 load_pulumi_image() {
-    log_info "Loading Pulumi image..."
-    docker cp pulumi-image.tar ${CLUSTER_NAME}-control-plane:/pulumi-image.tar
-    docker exec ${CLUSTER_NAME}-control-plane ctr -n k8s.io images import /pulumi-image.tar
-    log_success "Pulumi image loaded successfully!"
+    if [[ -f "pulumi-image.tar" ]]; then
+        log_info "Loading Pulumi image..."
+        docker cp pulumi-image.tar ${CLUSTER_NAME}-control-plane:/pulumi-image.tar
+        docker exec ${CLUSTER_NAME}-control-plane ctr -n k8s.io images import /pulumi-image.tar
+        log_success "Pulumi image loaded successfully!"
+    else
+        log_info "No pulumi-image.tar found, skipping image load"
+    fi
 }
 
 display_cluster_info() {
@@ -180,6 +216,15 @@ main() {
     log_info "Setting up local Kubernetes cluster for Pulumi Operator demo..."
     echo "=============================================================="
     
+    # Load environment variables from .env file
+    load_env_file
+    
+    # Set configuration variables with defaults
+    CLUSTER_NAME="${CLUSTER_NAME:-pulumi-aws-demo}"
+    KIND_VERSION="${KIND_VERSION:-v0.30.0}"
+    
+    log_info "Using cluster name: $CLUSTER_NAME"
+    
     check_prerequisites
     install_kind
     create_kind_cluster
@@ -195,6 +240,47 @@ main() {
     echo "2. Configure your AWS credentials in .env file"
     echo "3. Run './scripts/deploy-helm-chart.sh' to deploy AWS resources"
 }
+
+# Show usage information
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Set up a local Kubernetes cluster for Pulumi Operator demo
+
+Options:
+    --env-file ENV_FILE     Environment file to load (default: .env)
+    -h, --help              Show this help message
+
+Environment Variables (from .env file or shell):
+    CLUSTER_NAME           Kubernetes cluster name (default: pulumi-aws-demo)
+    KIND_VERSION           kind version to install (default: v0.30.0)
+
+Examples:
+    $0                            # Basic setup using .env
+    $0 --env-file .env.prod       # Using different env file
+
+EOF
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --env-file)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
 
 # Run main function
 main "$@"
