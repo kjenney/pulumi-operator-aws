@@ -1,6 +1,6 @@
 # Pulumi Kubernetes Operator AWS Deployment
 
-This project demonstrates how to deploy AWS resources using the Pulumi Kubernetes Operator (PKO) v2.0+ on a local Kubernetes cluster.
+This project demonstrates how to deploy AWS resources using the Pulumi Kubernetes Operator (PKO) v2.0+ on a local Kubernetes cluster. This project uses a **local backend** for Pulumi to eliminate external dependencies and ensure repeatability.
 
 ## 🚀 Quick Start
 
@@ -23,7 +23,7 @@ This project demonstrates how to deploy AWS resources using the Pulumi Kubernete
 2. **Set up environment variables:**
    ```bash
    cp .env.example .env
-   # Edit .env with your AWS credentials and Pulumi token
+   # Edit .env with your AWS credentials (no Pulumi token needed for local backend)
    ```
 
 3. **Create your Kubernetes cluster and install Pulumi Operator:**
@@ -134,6 +134,14 @@ kubectl logs -l app.kubernetes.io/name=pulumi-kubernetes-operator -n pulumi-syst
 ```
 
 ### Common Issues
+
+**Stack Stalled with "SourceUnavailable":**
+- The stack is resolved by using local backend configuration with proper workspace setup
+- Fixed automatically in the current Helm chart templates
+
+**npm Permission Errors:**
+- Resolved by init container that copies program files to writable workspace
+- The workspace uses separate volumes for program files and npm dependencies
 
 See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for detailed troubleshooting guide.
 

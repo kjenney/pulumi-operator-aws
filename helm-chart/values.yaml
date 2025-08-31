@@ -24,11 +24,21 @@ aws:
 
 # Pulumi Configuration
 pulumi:
-  # Pulumi access token secret
+  # Pulumi backend configuration
+  backend:
+    # Use local backend instead of Pulumi Cloud (recommended)
+    useLocal: true
+    # Passphrase for encrypting secrets in local backend
+    passphrase: "local-backend-passphrase"
+  
+  # Pulumi access token secret (only needed when useLocal is false)
   accessToken:
     secretName: pulumi-access-token
     # This value will be base64 encoded by deployment scripts  
     token: ""
+  
+  # Pulumi image for workspace
+  image: "pulumi/pulumi-nodejs:latest"
   
   # Pulumi project configuration
   project:

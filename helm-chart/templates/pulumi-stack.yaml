@@ -9,6 +9,11 @@ spec:
   # The stack name in format: organization/project/stack
   stack: "{{ .Values.pulumi.stack.name }}"
   
+  # Use local backend for state storage
+  {{- if .Values.pulumi.backend.useLocal }}
+  backend: "file:///share/backend"
+  {{- end }}
+  
   # Service account for the workspace pod
   serviceAccountName: {{ .Values.pulumi.stack.serviceAccountName | quote }}
   
@@ -20,25 +25,43 @@ spec:
   {{- end }}
   
   {{- if .Values.pulumi.stack.useConfigMap }}
-  # Reference the ConfigMap containing the Pulumi program
-  programRef:
-    name: {{ .Values.configMap.name }}
-    
   # Mount ConfigMap files in the workspace pod
   workspaceTemplate:
     spec:
-      volumes:
-        - name: program-files
-          configMap:
-            name: {{ .Values.configMap.name }}
-      containers:
-        - name: pulumi
-          volumeMounts:
+      image: {{ .Values.pulumi.image | default "pulumi/pulumi-nodejs:latest" }}
+      podTemplate:
+        spec:
+          initContainers:
+            - name: copy-program
+              image: busybox:latest
+              command: ["sh", "-c", "cp -rL /program-files/* /workspace/"]
+              volumeMounts:
+                - name: program-files
+                  mountPath: /program-files
+                - name: workspace-storage
+                  mountPath: /workspace
+          volumes:
             - name: program-files
-              mountPath: /share/workspace
+              configMap:
+                name: {{ .Values.configMap.name }}
+            - name: workspace-storage
+              emptyDir: {}
+            {{- if .Values.pulumi.backend.useLocal }}
+            - name: backend-storage
+              emptyDir: {}
+            {{- end }}
+          containers:
+            - name: pulumi
+              volumeMounts:
+                - name: workspace-storage
+                  mountPath: /share/workspace
+                {{- if .Values.pulumi.backend.useLocal }}
+                - name: backend-storage
+                  mountPath: /share/backend
+                {{- end }}
   {{- end }}
   
-  # Environment variables for AWS and Pulumi Cloud
+  # Environment variables for AWS and optionally Pulumi Cloud
   envRefs:
     AWS_ACCESS_KEY_ID:
       type: Secret
@@ -55,11 +78,18 @@ spec:
       secret:
         name: {{ .Values.aws.credentials.secretName }}
         key: AWS_REGION
+    {{- if not .Values.pulumi.backend.useLocal }}
     PULUMI_ACCESS_TOKEN:
       type: Secret
       secret:
         name: {{ .Values.pulumi.accessToken.secretName }}
         key: accessToken
+    {{- else }}
+    PULUMI_CONFIG_PASSPHRASE:
+      type: Literal
+      literal:
+        value: {{ .Values.pulumi.backend.passphrase | default "local-backend-passphrase" | quote }}
+    {{- end }}
   
   # Configuration for the Pulumi program
   config:

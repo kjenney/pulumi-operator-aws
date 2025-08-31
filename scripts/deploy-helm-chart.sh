@@ -59,7 +59,6 @@ Environment Variables (from .env file or shell):
     AWS_ACCESS_KEY_ID          AWS access key ID
     AWS_SECRET_ACCESS_KEY      AWS secret access key
     AWS_REGION                 AWS region (default: us-west-2)
-    PULUMI_ACCESS_TOKEN        Pulumi access token
     STACK_NAMESPACE            Kubernetes namespace for the stack
     OPERATOR_NAMESPACE         Kubernetes namespace for the operator
     PROJECT_NAME               Project name
@@ -179,10 +178,6 @@ validate_env_vars() {
         missing_vars+=("AWS_SECRET_ACCESS_KEY")
     fi
     
-    if [[ -z "${PULUMI_ACCESS_TOKEN:-}" ]]; then
-        missing_vars+=("PULUMI_ACCESS_TOKEN")
-    fi
-    
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         print_error "Missing required environment variables:"
         for var in "${missing_vars[@]}"; do
@@ -209,7 +204,7 @@ create_values_with_env() {
     # Base64 encode the secrets
     local aws_access_key_b64=$(echo -n "$AWS_ACCESS_KEY_ID" | base64)
     local aws_secret_key_b64=$(echo -n "$AWS_SECRET_ACCESS_KEY" | base64)
-    local pulumi_token_b64=$(echo -n "$PULUMI_ACCESS_TOKEN" | base64)
+    local aws_region_b64=$(echo -n "$AWS_REGION" | base64)
     
     # Start with base values
     if [[ -n "$VALUES_FILE" && -f "$VALUES_FILE" ]]; then
@@ -232,11 +227,11 @@ aws:
     secretName: aws-credentials
     accessKeyId: "$aws_access_key_b64"
     secretAccessKey: "$aws_secret_key_b64"
+    awsRegion: "$aws_region_b64"
 
 pulumi:
-  accessToken:
-    secretName: pulumi-access-token
-    token: "$pulumi_token_b64"
+  backend:
+    useLocal: true
   
   project:
     name: ${PROJECT_NAME:-aws-resources}
