@@ -216,56 +216,13 @@ cleanup_stacks() {
             done <<< "$stacks"
         fi
         
-        # Check for Helm releases and handle them properly for local backend
-        if command -v helm &> /dev/null; then
-            log_info "Checking for Helm releases in namespace ${stack_ns}..."
-            local helm_releases
-            helm_releases=$(helm list -n ${stack_ns} --short 2>/dev/null || true)
-            
-            if [[ -n "$helm_releases" ]]; then
-                while IFS= read -r release_name; do
-                    [[ -n "$release_name" ]] || continue
-                    log_info "Initiating graceful uninstall of Helm release: ${release_name} in namespace ${stack_ns}..."
-                    
-                    # For local backend, we need to ensure AWS resources are cleaned up first
-                    # Before helm uninstall, let the stack controller handle the destroy
-                    log_info "Allowing Pulumi stack to complete AWS resource cleanup before Helm uninstall..."
-                    
-                    # Use helm uninstall with --wait to ensure proper cleanup sequence
-                    if helm uninstall "${release_name}" -n ${stack_ns} --timeout=20m --wait 2>/dev/null; then
-                        log_success "Successfully uninstalled Helm release: ${release_name}"
-                    else
-                        log_warning "Helm uninstall encountered issues for ${release_name}, checking stack status..."
-                        
-                        # Check if any stacks still exist and their status
-                        local remaining_stacks
-                        remaining_stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | awk '{print $1}' || true)
-                        if [[ -n "$remaining_stacks" ]]; then
-                            log_info "Stacks still exist, allowing more time for AWS resource cleanup..."
-                            sleep 60  # Give additional time for AWS cleanup
-                            
-                            # Retry helm uninstall
-                            if helm uninstall "${release_name}" -n ${stack_ns} --timeout=10m --wait 2>/dev/null; then
-                                log_success "Successfully uninstalled Helm release: ${release_name} on retry"
-                            else
-                                log_warning "Helm uninstall failed for ${release_name}, will proceed with manual cleanup..."
-                            fi
-                        fi
-                    fi
-                done <<< "$helm_releases"
-            fi
-        fi
-        
-        # Handle any remaining stacks (should be rare after proper Helm cleanup)
+        # First, explicitly delete any stacks before Helm uninstall
         stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | awk '{print $1}' || true)
         if [[ -n "$stacks" ]]; then
-            log_info "Found remaining stacks after Helm cleanup, handling gracefully..."
+            log_info "Deleting stacks before Helm uninstall to ensure proper AWS resource cleanup..."
             while IFS= read -r stack_name; do
                 [[ -n "$stack_name" ]] || continue
-                log_info "Gracefully deleting remaining stack ${stack_name} in namespace ${stack_ns}..."
-                
-                # DO NOT patch finalizers - let the operator handle the destroy process
-                # This ensures AWS resources are properly cleaned up with local backend
+                log_info "Deleting stack ${stack_name} in namespace ${stack_ns}..."
                 
                 # Delete the stack and let the operator handle the finalization
                 kubectl delete stack ${stack_name} -n ${stack_ns} --timeout=1200s 2>/dev/null || {
@@ -317,6 +274,28 @@ cleanup_stacks() {
                     fi
                 }
             done <<< "$stacks"
+        fi
+        
+        # Now handle Helm releases after stacks are deleted
+        if command -v helm &> /dev/null; then
+            log_info "Checking for Helm releases in namespace ${stack_ns}..."
+            local helm_releases
+            helm_releases=$(helm list -n ${stack_ns} --short 2>/dev/null || true)
+            
+            if [[ -n "$helm_releases" ]]; then
+                while IFS= read -r release_name; do
+                    [[ -n "$release_name" ]] || continue
+                    log_info "Uninstalling Helm release: ${release_name} in namespace ${stack_ns}..."
+                    
+                    # Use helm uninstall with --wait to ensure proper cleanup sequence
+                    if helm uninstall "${release_name}" -n ${stack_ns} --timeout=10m --wait 2>/dev/null; then
+                        log_success "Successfully uninstalled Helm release: ${release_name}"
+                    else
+                        log_warning "Helm uninstall encountered issues for ${release_name}, forcing cleanup..."
+                        helm uninstall "${release_name}" -n ${stack_ns} --no-hooks 2>/dev/null || true
+                    fi
+                done <<< "$helm_releases"
+            fi
         fi
         
         # Final verification - check for any remaining stacks

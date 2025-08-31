@@ -4,6 +4,9 @@
 
 # Global configuration
 global:
+  # Enable pre-delete hook to wait for stack resource deletion
+  enablePreDeleteHook: true
+  
   # Namespace configuration
   namespace:
     name: pulumi-aws-demo
