@@ -3,6 +3,9 @@
 
 # Global configuration
 global:
+  # Enable pre-delete hook to wait for stack resource deletion
+  enablePreDeleteHook: true
+  
   # Namespace configuration
   namespace:
     name: my-pulumi-aws-demo
@@ -67,6 +70,57 @@ project:
     Team: platform
     CostCenter: "CC-12345"
     Owner: "platform-team@company.com"
+
+# AWS Resources Configuration
+# Control which AWS resources to provision - customize based on your needs
+resources:
+  # S3 Resources
+  s3:
+    # Create S3 bucket with versioning and encryption
+    bucket:
+      enabled: true
+    # Block public access to the S3 bucket  
+    publicAccessBlock:
+      enabled: true
+  
+  # VPC and Networking Resources
+  vpc:
+    # Create VPC with DNS support
+    vpc:
+      enabled: false  # Disable if you have an existing VPC
+    # Create Internet Gateway for the VPC
+    internetGateway:
+      enabled: false  # Only needed if creating a new VPC
+    # Create public subnet in the VPC
+    publicSubnet:
+      enabled: false  # Only needed if creating a new VPC
+    # Create route table for public subnet
+    routeTable:
+      enabled: false  # Only needed if creating a new VPC
+    # Associate route table with public subnet
+    routeTableAssociation:
+      enabled: false  # Only needed if creating a new VPC
+  
+  # Security Resources
+  security:
+    # Create security group for web servers (HTTP/HTTPS/SSH access)
+    webSecurityGroup:
+      enabled: false  # Disable if you have existing security groups
+  
+  # IAM Resources
+  iam:
+    # Create IAM role for EC2 instances
+    ec2Role:
+      enabled: true   # Usually needed for EC2 instances
+    # Create IAM policy for S3 access
+    s3Policy:
+      enabled: true   # Usually needed if using S3
+    # Attach S3 policy to EC2 role
+    rolePolicyAttachment:
+      enabled: true   # Usually needed if using IAM resources
+    # Create instance profile for EC2 role
+    instanceProfile:
+      enabled: true   # Usually needed for EC2 instances
 
 # Service Account Configuration
 serviceAccount:

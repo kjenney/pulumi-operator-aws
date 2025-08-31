@@ -80,6 +80,57 @@ project:
     Project: pulumi-aws-demo
     ManagedBy: pulumi-kubernetes-operator
 
+# AWS Resources Configuration
+# Control which AWS resources to provision
+resources:
+  # S3 Resources
+  s3:
+    # Create S3 bucket with versioning and encryption
+    bucket:
+      enabled: true
+    # Block public access to the S3 bucket
+    publicAccessBlock:
+      enabled: true
+  
+  # VPC and Networking Resources
+  vpc:
+    # Create VPC with DNS support
+    vpc:
+      enabled: false
+    # Create Internet Gateway for the VPC
+    internetGateway:
+      enabled: true
+    # Create public subnet in the VPC
+    publicSubnet:
+      enabled: true
+    # Create route table for public subnet
+    routeTable:
+      enabled: true
+    # Associate route table with public subnet
+    routeTableAssociation:
+      enabled: true
+  
+  # Security Resources
+  security:
+    # Create security group for web servers (HTTP/HTTPS/SSH access)
+    webSecurityGroup:
+      enabled: true
+  
+  # IAM Resources
+  iam:
+    # Create IAM role for EC2 instances
+    ec2Role:
+      enabled: true
+    # Create IAM policy for S3 access
+    s3Policy:
+      enabled: true
+    # Attach S3 policy to EC2 role
+    rolePolicyAttachment:
+      enabled: true
+    # Create instance profile for EC2 role
+    instanceProfile:
+      enabled: true
+
 # Service Account Configuration
 serviceAccount:
   # Specifies whether a service account should be created
