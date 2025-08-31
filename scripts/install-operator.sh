@@ -146,15 +146,14 @@ verify_installation() {
         log_success "Pulumi Operator is running successfully!"
     else
         log_error "Pulumi Operator is not ready. Status: $operator_status"
-        log_info "Checking for operator in pulumi-system namespace..."
+        log_info "Checking for operator in ${OPERATOR_NAMESPACE} namespace..."
         
-        # Sometimes the operator might be in pulumi-system namespace
-        if kubectl get deployment pulumi-kubernetes-operator-controller-manager -n pulumi-system &> /dev/null; then
-            log_info "Found operator in pulumi-system namespace"
-            OPERATOR_NAMESPACE="pulumi-system"
+        # Sometimes the operator might be in the operator namespace
+        if kubectl get deployment pulumi-kubernetes-operator-controller-manager -n ${OPERATOR_NAMESPACE} &> /dev/null; then
+            log_info "Found operator in ${OPERATOR_NAMESPACE} namespace"
             operator_status=$(kubectl get deployment pulumi-kubernetes-operator-controller-manager -n ${OPERATOR_NAMESPACE} -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
             if [[ "$operator_status" -ge "1" ]]; then
-                log_success "Pulumi Operator is running in pulumi-system namespace!"
+                log_success "Pulumi Operator is running in ${OPERATOR_NAMESPACE} namespace!"
                 return 0
             fi
         fi
@@ -168,23 +167,14 @@ verify_installation() {
 display_operator_info() {
     log_info "Operator Information:"
     echo "======================"
-    
-    # Try to find the operator namespace
-    local ns="${OPERATOR_NAMESPACE}"
-    if ! kubectl get deployment pulumi-kubernetes-operator-controller-manager -n ${ns} &> /dev/null; then
-        if kubectl get deployment pulumi-kubernetes-operator-controller-manager -n pulumi-system &> /dev/null; then
-            ns="pulumi-system"
-            log_info "Operator found in pulumi-system namespace"
-        fi
-    fi
-    
-    kubectl get deployment pulumi-kubernetes-operator-controller-manager -n ${ns}
+
+    kubectl get deployment pulumi-kubernetes-operator-controller-manager -n ${OPERATOR_NAMESPACE}
     echo ""
-    kubectl get pods -n ${ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator
+    kubectl get pods -n ${OPERATOR_NAMESPACE} -l app.kubernetes.io/name=pulumi-kubernetes-operator
     echo ""
     
     log_info "Operator logs (last 10 lines):"
-    kubectl logs -n ${ns} deployment/pulumi-kubernetes-operator-controller-manager --tail=10 || true
+    kubectl logs -n ${OPERATOR_NAMESPACE} deployment/pulumi-kubernetes-operator-controller-manager --tail=10 || true
     echo ""
     
     # Show CRDs
@@ -195,48 +185,30 @@ display_operator_info() {
 check_operator_health() {
     log_info "Checking operator health..."
     
-    # Find the correct namespace
-    local ns="${OPERATOR_NAMESPACE}"
-    if ! kubectl get deployment pulumi-kubernetes-operator-controller-manager -n ${ns} &> /dev/null; then
-        if kubectl get deployment pulumi-kubernetes-operator-controller-manager -n pulumi-system &> /dev/null; then
-            ns="pulumi-system"
-        else
-            log_error "Could not find operator deployment"
-            return 1
-        fi
-    fi
-    
     # Get the operator pod name
     local pod_name
-    pod_name=$(kubectl get pods -n ${ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-    
+    pod_name=$(kubectl get pods -n ${OPERATOR_NAMESPACE} -l app.kubernetes.io/name=pulumi-kubernetes-operator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
     if [[ -z "$pod_name" ]]; then
         # Try alternative label selector
-        pod_name=$(kubectl get pods -n ${ns} -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        pod_name=$(kubectl get pods -n ${OPERATOR_NAMESPACE} -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     fi
     
     if [[ -z "$pod_name" ]]; then
         log_error "Could not find operator pod"
-        kubectl get pods -n ${ns}
+        kubectl get pods -n ${OPERATOR_NAMESPACE}
         return 1
     fi
     
     # Check if the pod is ready
     local pod_ready
-    pod_ready=$(kubectl get pod "$pod_name" -n ${ns} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "False")
-    
+    pod_ready=$(kubectl get pod "$pod_name" -n ${OPERATOR_NAMESPACE} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "False")
+
     if [[ "$pod_ready" == "True" ]]; then
         log_success "Operator pod is healthy and ready!"
     else
         log_warning "Operator pod status: $pod_ready"
-        kubectl describe pod "$pod_name" -n ${ns}
-        # Don't fail here as the pod might still be starting
-    fi
-    
-    # Update the namespace for subsequent scripts
-    if [[ "$ns" != "$OPERATOR_NAMESPACE" ]]; then
-        log_info "Updating namespace in environment for subsequent scripts..."
-        export OPERATOR_NAMESPACE="$ns"
+        kubectl describe pod "$pod_name" -n ${OPERATOR_NAMESPACE}
     fi
 }
 

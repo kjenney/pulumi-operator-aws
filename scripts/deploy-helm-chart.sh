@@ -316,7 +316,7 @@ show_post_deployment_info() {
     echo "  kubectl describe stack ${PROJECT_NAME:-aws-resources} -n $NAMESPACE"
     echo
     echo "Monitor the logs:"
-    echo "  kubectl logs -l pulumi.com/stack=${PROJECT_NAME:-aws-resources} -n $NAMESPACE -f"
+    echo "  kubectl logs -l auto.pulumi.com/component=workspace -n $NAMESPACE -f"
     echo
     echo "Check all resources:"
     echo "  kubectl get all -n $NAMESPACE"

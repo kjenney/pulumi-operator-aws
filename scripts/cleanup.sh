@@ -177,67 +177,178 @@ cleanup_stacks() {
         [[ -n "$stack_ns" ]] || continue
         log_info "Processing stacks in namespace: $stack_ns"
         
-        # Get all stacks in this namespace
+        # Get all stacks in this namespace first to check their status
         local stacks
         stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | awk '{print $1}' || true)
         
         if [[ -n "$stacks" ]]; then
+            # First, check if any stacks are currently being destroyed
+            log_info "Checking stack status before cleanup..."
             while IFS= read -r stack_name; do
                 [[ -n "$stack_name" ]] || continue
-                log_info "Deleting stack ${stack_name} in namespace ${stack_ns}..."
-                kubectl delete stack ${stack_name} -n ${stack_ns} --timeout=600s || {
-                    log_warning "Failed to delete stack gracefully, forcing deletion..."
-                    kubectl patch stack ${stack_name} -n ${stack_ns} -p '{"metadata":{"finalizers":[]}}' --type=merge || true
-                    kubectl delete stack ${stack_name} -n ${stack_ns} --force --grace-period=0 || true
+                local stack_status
+                stack_status=$(kubectl get stack ${stack_name} -n ${stack_ns} -o jsonpath='{.status.lastUpdate.state}' 2>/dev/null || echo "unknown")
+                log_info "Stack ${stack_name} status: ${stack_status}"
+                
+                # If stack is already being destroyed, wait for it to complete
+                if [[ "$stack_status" == "destroying" ]]; then
+                    log_info "Stack ${stack_name} is already being destroyed, monitoring progress..."
+                    local destroy_timeout=1800  # 30 minutes for destroy operation
+                    local destroy_interval=30
+                    local destroy_elapsed=0
+                    
+                    while [[ $destroy_elapsed -lt $destroy_timeout ]]; do
+                        stack_status=$(kubectl get stack ${stack_name} -n ${stack_ns} -o jsonpath='{.status.lastUpdate.state}' 2>/dev/null || echo "deleted")
+                        
+                        if [[ "$stack_status" == "deleted" ]] || ! kubectl get stack ${stack_name} -n ${stack_ns} &>/dev/null; then
+                            log_success "Stack ${stack_name} destroyed successfully"
+                            break
+                        elif [[ "$stack_status" == "failed" ]]; then
+                            log_error "Stack ${stack_name} destruction failed"
+                            break
+                        fi
+                        
+                        log_info "Stack ${stack_name} still destroying... (${destroy_elapsed}s elapsed, status: ${stack_status})"
+                        sleep $destroy_interval
+                        destroy_elapsed=$((destroy_elapsed + destroy_interval))
+                    done
+                fi
+            done <<< "$stacks"
+        fi
+        
+        # Check for Helm releases and handle them properly for local backend
+        if command -v helm &> /dev/null; then
+            log_info "Checking for Helm releases in namespace ${stack_ns}..."
+            local helm_releases
+            helm_releases=$(helm list -n ${stack_ns} --short 2>/dev/null || true)
+            
+            if [[ -n "$helm_releases" ]]; then
+                while IFS= read -r release_name; do
+                    [[ -n "$release_name" ]] || continue
+                    log_info "Initiating graceful uninstall of Helm release: ${release_name} in namespace ${stack_ns}..."
+                    
+                    # For local backend, we need to ensure AWS resources are cleaned up first
+                    # Before helm uninstall, let the stack controller handle the destroy
+                    log_info "Allowing Pulumi stack to complete AWS resource cleanup before Helm uninstall..."
+                    
+                    # Use helm uninstall with --wait to ensure proper cleanup sequence
+                    if helm uninstall "${release_name}" -n ${stack_ns} --timeout=20m --wait 2>/dev/null; then
+                        log_success "Successfully uninstalled Helm release: ${release_name}"
+                    else
+                        log_warning "Helm uninstall encountered issues for ${release_name}, checking stack status..."
+                        
+                        # Check if any stacks still exist and their status
+                        local remaining_stacks
+                        remaining_stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | awk '{print $1}' || true)
+                        if [[ -n "$remaining_stacks" ]]; then
+                            log_info "Stacks still exist, allowing more time for AWS resource cleanup..."
+                            sleep 60  # Give additional time for AWS cleanup
+                            
+                            # Retry helm uninstall
+                            if helm uninstall "${release_name}" -n ${stack_ns} --timeout=10m --wait 2>/dev/null; then
+                                log_success "Successfully uninstalled Helm release: ${release_name} on retry"
+                            else
+                                log_warning "Helm uninstall failed for ${release_name}, will proceed with manual cleanup..."
+                            fi
+                        fi
+                    fi
+                done <<< "$helm_releases"
+            fi
+        fi
+        
+        # Handle any remaining stacks (should be rare after proper Helm cleanup)
+        stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | awk '{print $1}' || true)
+        if [[ -n "$stacks" ]]; then
+            log_info "Found remaining stacks after Helm cleanup, handling gracefully..."
+            while IFS= read -r stack_name; do
+                [[ -n "$stack_name" ]] || continue
+                log_info "Gracefully deleting remaining stack ${stack_name} in namespace ${stack_ns}..."
+                
+                # DO NOT patch finalizers - let the operator handle the destroy process
+                # This ensures AWS resources are properly cleaned up with local backend
+                
+                # Delete the stack and let the operator handle the finalization
+                kubectl delete stack ${stack_name} -n ${stack_ns} --timeout=1200s 2>/dev/null || {
+                    log_warning "Stack deletion timed out for ${stack_name}, checking status..."
+                    
+                    # Check if stack is in destroying state
+                    local stack_status
+                    stack_status=$(kubectl get stack ${stack_name} -n ${stack_ns} -o jsonpath='{.status.lastUpdate.state}' 2>/dev/null || echo "not found")
+                    
+                    if [[ "$stack_status" == "destroying" ]]; then
+                        log_info "Stack ${stack_name} is being destroyed, waiting for completion..."
+                        # Wait longer for destroy to complete
+                        local extended_timeout=1800  # 30 minutes
+                        local check_interval=30
+                        local extended_elapsed=0
+                        
+                        while [[ $extended_elapsed -lt $extended_timeout ]]; do
+                            if ! kubectl get stack ${stack_name} -n ${stack_ns} &>/dev/null; then
+                                log_success "Stack ${stack_name} successfully destroyed"
+                                break
+                            fi
+                            
+                            stack_status=$(kubectl get stack ${stack_name} -n ${stack_ns} -o jsonpath='{.status.lastUpdate.state}' 2>/dev/null || echo "not found")
+                            log_info "Stack ${stack_name} destroy in progress... (${extended_elapsed}s elapsed, status: ${stack_status})"
+                            
+                            if [[ "$stack_status" == "failed" ]]; then
+                                log_error "Stack ${stack_name} destruction failed. Check the workspace pod logs for details."
+                                # Show recent logs from workspace pod if available
+                                local workspace_pod
+                                workspace_pod=$(kubectl get pods -n ${stack_ns} -l "pulumi.com/stack-name=${stack_name}" --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+                                if [[ -n "$workspace_pod" ]]; then
+                                    log_info "Recent logs from workspace pod ${workspace_pod}:"
+                                    kubectl logs ${workspace_pod} -n ${stack_ns} --tail=20 2>/dev/null || true
+                                fi
+                                break
+                            fi
+                            
+                            sleep $check_interval
+                            extended_elapsed=$((extended_elapsed + check_interval))
+                        done
+                        
+                        # If still exists after extended timeout, log error but continue
+                        if kubectl get stack ${stack_name} -n ${stack_ns} &>/dev/null; then
+                            log_error "Stack ${stack_name} cleanup timed out. AWS resources may still exist."
+                            log_error "Check AWS console and consider manual cleanup."
+                        fi
+                    else
+                        log_warning "Stack ${stack_name} status: ${stack_status}"
+                    fi
                 }
             done <<< "$stacks"
-            
-            # Wait for stack deletions to complete
-            local timeout=900  # 15 minutes
-            local interval=15
-            local elapsed=0
-            
-            log_info "Waiting for AWS resources to be deleted in namespace ${stack_ns}..."
-            while [[ $elapsed -lt $timeout ]]; do
-                local remaining_stacks
-                remaining_stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | wc -l)
-                
-                if [[ "$remaining_stacks" -eq 0 ]]; then
-                    break
-                fi
-                
-                log_info "Stack deletion in progress in ${stack_ns}... (${elapsed}s elapsed)"
-                
-                # Show workspace pods if any
-                local workspace_pods
-                workspace_pods=$(kubectl get pods -n ${stack_ns} -l pulumi.com/stack-name --no-headers 2>/dev/null | wc -l)
-                if [[ "$workspace_pods" -gt 0 ]]; then
-                    log_info "Workspace pods still running for stack cleanup..."
-                fi
-                
-                sleep $interval
-                elapsed=$((elapsed + interval))
-            done
-            
-            # Force cleanup any remaining stacks
-            local remaining_stacks
-            remaining_stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | awk '{print $1}' || true)
-            if [[ -n "$remaining_stacks" ]]; then
-                log_warning "Timeout reached, forcing deletion of remaining stacks in ${stack_ns}..."
-                while IFS= read -r stack_name; do
-                    [[ -n "$stack_name" ]] || continue
-                    kubectl patch stack ${stack_name} -n ${stack_ns} -p '{"metadata":{"finalizers":[]}}' --type=merge || true
-                    kubectl delete stack ${stack_name} -n ${stack_ns} --force --grace-period=0 || true
-                done <<< "$remaining_stacks"
-            fi
-            
-            # Clean up any remaining workspace pods
-            log_info "Cleaning up workspace pods in ${stack_ns}..."
-            kubectl delete pods -n ${stack_ns} -l pulumi.com/stack-name --force --grace-period=0 2>/dev/null || true
         fi
+        
+        # Final verification - check for any remaining stacks
+        local final_stacks
+        final_stacks=$(kubectl get stacks -n ${stack_ns} --no-headers 2>/dev/null | wc -l)
+        if [[ "$final_stacks" -eq 0 ]]; then
+            log_success "All stacks cleaned up successfully in namespace ${stack_ns}"
+        else
+            log_warning "${final_stacks} stacks may still remain in namespace ${stack_ns}"
+            log_info "Remaining stacks:"
+            kubectl get stacks -n ${stack_ns} 2>/dev/null || true
+        fi
+        
+        # Clean up any orphaned workspace pods (only after stacks are gone)
+        if [[ "$final_stacks" -eq 0 ]]; then
+            log_info "Cleaning up any orphaned workspace pods in ${stack_ns}..."
+            local workspace_pods
+            workspace_pods=$(kubectl get pods -n ${stack_ns} -l pulumi.com/stack-name --no-headers 2>/dev/null | awk '{print $1}' || true)
+            if [[ -n "$workspace_pods" ]]; then
+                while IFS= read -r pod_name; do
+                    [[ -n "$pod_name" ]] || continue
+                    log_info "Deleting orphaned workspace pod: ${pod_name}"
+                    kubectl delete pod ${pod_name} -n ${stack_ns} --timeout=60s 2>/dev/null || true
+                done <<< "$workspace_pods"
+            fi
+        fi
+        
     done <<< "$stack_namespaces"
     
     log_success "Pulumi stacks cleanup completed!"
+    log_info "Note: AWS resources should be cleaned up automatically by Pulumi's destroyOnFinalize."
+    log_info "If any AWS resources remain, check the workspace pod logs and AWS console."
 }
 
 cleanup_kubernetes_resources() {
