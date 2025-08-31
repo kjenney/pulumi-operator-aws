@@ -15,7 +15,7 @@ This project demonstrates how to deploy AWS resources using the Pulumi Kubernete
 
 ## Optional setup
 
-The Pulumi container image is rather large, so to speed up the loading of stack resources it has beem saved locally. It loaded into the Kubernetes cluster on creation. The file name is pulumi-image.tar. Use `docker save pulumi/pulumi:latest-nonroot -o pulumi-image.tar` to create the tar.
+The Pulumi container image is rather large, so to speed up the loading of stack resources it has beem saved locally. The image is loaded into the Kubernetes cluster on creation if a specific files exists. The file name is `pulumi-image.tar`. Use `docker save pulumi/pulumi:latest-nonroot -o pulumi-image.tar` to create the file. 
 
 ### Installation
 
