@@ -31,65 +31,7 @@ spec:
       # Values files to use (in order of precedence)
       valueFiles:
         - values.yaml
-      
-      # Override values directly (highest precedence)
-      values: |
-        # Global configuration
-        global:
-          namespace:
-            name: pulumi-aws
-        
-        # AWS Configuration - these will be populated by external secrets or manual setup
-        aws:
-          region: us-west-2
-          credentials:
-            secretName: aws-credentials
-        
-        # Pulumi Configuration
-        pulumi:
-          backend:
-            useLocal: true
-            persistence:
-              enabled: true
-              storageClass: ""  # Use default storage class
-              size: "10Gi"
-          
-          stack:
-            name: aws-resources
-            destroyOnFinalize: true
-            resyncFrequencySeconds: 300  # 5 minutes for GitOps
-        
-        # AWS Resources - customize based on your needs
-        resources:
-          s3:
-            bucket:
-              enabled: true
-            publicAccessBlock:
-              enabled: true
-          vpc:
-            vpc:
-              enabled: true
-            internetGateway:
-              enabled: true
-            publicSubnet:
-              enabled: true
-            routeTable:
-              enabled: true
-            routeTableAssociation:
-              enabled: true
-          security:
-            webSecurityGroup:
-              enabled: true
-          iam:
-            ec2Role:
-              enabled: false  # Disabled by default for GitOps
-            s3Policy:
-              enabled: false
-            rolePolicyAttachment:
-              enabled: false
-            instanceProfile:
-              enabled: false
-      
+
       # Helm parameters (alternative to values)
       parameters: []
       
