@@ -40,31 +40,6 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-find_operator_namespace() {
-    local namespaces=("${OPERATOR_NAMESPACE}" "pulumi-system" "pulumi-kubernetes-operator")
-    
-    # Check if kubectl is available
-    if ! command -v kubectl &> /dev/null; then
-        log_error "kubectl not found. Please ensure kubectl is installed and configured."
-        return 1
-    fi
-    
-    # Check if we can connect to the cluster
-    if ! kubectl cluster-info &> /dev/null; then
-        log_warning "Cannot connect to Kubernetes cluster. Skipping operator namespace detection."
-        return 1
-    fi
-    
-    for ns in "${namespaces[@]}"; do
-        if kubectl get deployment pulumi-kubernetes-operator-controller-manager -n ${ns} &> /dev/null; then
-            echo "$ns"
-            return 0
-        fi
-    done
-    
-    return 1
-}
-
 find_stack_namespaces() {
     # Check if kubectl is available and cluster is accessible
     if ! command -v kubectl &> /dev/null; then
@@ -330,59 +305,6 @@ cleanup_kubernetes_resources() {
     log_success "Kubernetes resources cleaned up!"
 }
 
-uninstall_operator() {
-    log_info "Uninstalling Pulumi Kubernetes Operator..."
-    
-    # Check if kubectl is available and cluster is accessible
-    if ! command -v kubectl &> /dev/null; then
-        log_warning "kubectl not found. Skipping operator uninstall."
-        return 0
-    fi
-    
-    if ! kubectl cluster-info &> /dev/null; then
-        log_warning "Cannot connect to Kubernetes cluster. Skipping operator uninstall."
-        return 0
-    fi
-    
-    # Find the operator namespace
-    local operator_ns
-    if ! operator_ns=$(find_operator_namespace); then
-        log_info "Pulumi Kubernetes Operator not found, skipping..."
-        return 0
-    fi
-    
-    log_info "Found operator in namespace: $operator_ns"
-    
-    # Try to uninstall using Helm first
-    if command -v helm &> /dev/null; then
-        log_info "Attempting Helm uninstallation..."
-        helm uninstall pulumi-kubernetes-operator -n ${operator_ns} 2>/dev/null || true
-    fi
-    
-    # Delete operator deployment if still exists
-    kubectl delete deployment pulumi-kubernetes-operator-controller-manager -n ${operator_ns} --ignore-not-found=true
-    
-    # Delete any remaining operator resources
-    kubectl delete pods -n ${operator_ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator --force --grace-period=0 2>/dev/null || true
-    kubectl delete pods -n ${operator_ns} -l app.kubernetes.io/component=controller --force --grace-period=0 2>/dev/null || true
-    
-    # Delete services, configmaps, and other operator resources
-    kubectl delete service -n ${operator_ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator --ignore-not-found=true
-    kubectl delete configmap -n ${operator_ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator --ignore-not-found=true
-    kubectl delete secret -n ${operator_ns} -l app.kubernetes.io/name=pulumi-kubernetes-operator --ignore-not-found=true
-    
-    # Delete CRDs (only if they exist)
-    log_info "Deleting Pulumi CRDs..."
-    local crds=("stacks.pulumi.com" "workspaces.pulumi.com" "programs.pulumi.com" "updates.pulumi.com")
-    for crd in "${crds[@]}"; do
-        if kubectl get crd ${crd} &> /dev/null; then
-            kubectl delete crd ${crd} --ignore-not-found=true
-        fi
-    done
-    
-    log_success "Pulumi Kubernetes Operator uninstalled!"
-}
-
 cleanup_namespaces() {
     log_info "Cleaning up namespaces..."
     
@@ -431,26 +353,6 @@ cleanup_namespaces() {
     done <<< "$unique_namespaces"
     
     log_success "Namespaces cleaned up!"
-}
-
-confirm_operator_deletion() {
-    echo ""
-    log_info "Pulumi Stack cleanup completed successfully."
-    log_warning "The Pulumi Kubernetes Operator is still running and can manage other stacks."
-    echo ""
-    echo "Do you want to uninstall the Pulumi Kubernetes Operator as well?"
-    echo "  • Choose 'yes' if you're done with all Pulumi operations on this cluster"
-    echo "  • Choose 'no' if you want to keep the operator for other stacks"
-    echo ""
-    read -p "Uninstall the Pulumi Kubernetes Operator? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        return 0  # Proceed with operator uninstall
-    else
-        log_info "Keeping Pulumi Kubernetes Operator running..."
-        log_info "You can uninstall it later by running this script again or using Helm directly."
-        return 1  # Skip operator uninstall
-    fi
 }
 
 cleanup_cluster() {
@@ -978,18 +880,7 @@ main() {
     # Step 3: Clean up other Kubernetes resources
     cleanup_kubernetes_resources
     
-    # Step 4: Ask user if they want to uninstall the operator
-    if confirm_operator_deletion; then
-        uninstall_operator
-        cleanup_namespaces
-        operator_uninstalled=true
-    else
-        log_info "Skipping operator uninstall and namespace cleanup..."
-        log_info "Note: Operator and stack namespaces will remain."
-        operator_uninstalled=false
-    fi
-    
-    # Step 5: Ask user if they want to uninstall ArgoCD
+    # Step 4: Ask user if they want to uninstall ArgoCD
     if confirm_argocd_deletion; then
         uninstall_argocd
         argocd_uninstalled=true
