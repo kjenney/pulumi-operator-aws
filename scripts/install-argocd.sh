@@ -120,6 +120,50 @@ wait_for_argocd() {
     log_success "ArgoCD is ready!"
 }
 
+setup_argocd_ingress() {
+    log_info "Setting up ArgoCD ingress..."
+    
+    # Check if nginx ingress controller is available
+    if ! kubectl get pods -A | grep -q "ingress-nginx"; then
+        log_warning "Nginx ingress controller not found - skipping ingress setup"
+        return 0
+    fi
+    
+    # Create ArgoCD ingress
+    log_info "Creating ArgoCD ingress..."
+    cat <<EOF | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server-ingress
+  namespace: ${ARGOCD_NAMESPACE}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - argocd.localhost
+    secretName: argocd-server-tls
+  rules:
+  - host: argocd.localhost
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: argocd-server
+            port:
+              number: 443
+EOF
+    
+    log_success "ArgoCD ingress created!"
+    log_info "ArgoCD will be accessible at: https://argocd.localhost"
+    log_info "Add '127.0.0.1 argocd.localhost' to your /etc/hosts file"
+}
+
 setup_argocd_access() {
     log_info "Setting up ArgoCD access..."
     
@@ -127,6 +171,9 @@ setup_argocd_access() {
     log_info "Retrieving ArgoCD admin password..."
     local admin_password
     admin_password=$(kubectl -n ${ARGOCD_NAMESPACE} get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+    
+    # Setup ingress if nginx controller is available
+    setup_argocd_ingress
     
     # Check if we're running on Kind
     local cluster_info
@@ -141,11 +188,10 @@ setup_argocd_access() {
         echo "  • Username: admin"
         echo "  • Password: ${admin_password}"
         echo ""
-        log_info "To access ArgoCD UI, run this command in a separate terminal:"
-        echo "  kubectl port-forward svc/argocd-server -n ${ARGOCD_NAMESPACE} 8080:443"
-        echo ""
-        log_info "Then open your browser to:"
-        echo "  https://localhost:8080"
+        log_info "Access options:"
+        echo "  1. Via ingress: https://argocd.localhost (if nginx ingress is available)"
+        echo "  2. Via port-forward: kubectl port-forward svc/argocd-server -n ${ARGOCD_NAMESPACE} 8080:443"
+        echo "     Then open: https://localhost:8080"
         echo ""
         log_warning "Note: You may need to accept the self-signed certificate in your browser"
         
@@ -162,7 +208,8 @@ setup_argocd_access() {
         log_success "ArgoCD access configured!"
         echo ""
         log_info "ArgoCD Access Information:"
-        echo "  • URL: http://localhost:${node_port}"
+        echo "  • Via ingress: https://argocd.localhost (if nginx ingress is available)"
+        echo "  • Via NodePort: http://localhost:${node_port}"
         echo "  • Username: admin"
         echo "  • Password: ${admin_password}"
     fi
