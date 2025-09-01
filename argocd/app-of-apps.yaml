@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: pulumi-operator-aws-suite
+  name: pulumi-operator-aws
   namespace: argocd
   labels:
-    app.kubernetes.io/name: pulumi-operator-aws-suite
+    app.kubernetes.io/name: pulumi-operator-aws
     app.kubernetes.io/component: app-of-apps
     app.kubernetes.io/managed-by: argocd
   annotations:
@@ -15,18 +15,16 @@ spec:
   # The project the application belongs to
   project: default
   
-  # Source configuration - this repository containing ArgoCD manifests
+  # Source configuration - this repository containing ArgoCD ordered manifests
   source:
-    # Update this to your Git repository URL
     repoURL: https://github.com/kjenney/pulumi-operator-aws.git
     targetRevision: HEAD
-    path: argocd  # Path to ArgoCD manifests
+    path: argocd/ordered  # Use ordered directory with sync waves
     
     # Directory configuration
     directory:
-      recurse: false  # Don't recurse into subdirectories
+      recurse: true  # Include subdirectories
       include: "*.yaml"  # Only include YAML files
-      exclude: "app-of-apps.yaml"  # Don't include this file itself
 
   # Destination configuration
   destination:
@@ -36,13 +34,15 @@ spec:
   # Sync policy for the app of apps
   syncPolicy:
     automated:
-      prune: true
-      selfHeal: true
+      prune: true  # Enable pruning for proper cleanup
+      selfHeal: true  # Auto-heal configuration drift
       allowEmpty: false
     
     syncOptions:
-      - PruneLast=true
+      - CreateNamespace=true
+      - PruneLast=true  # Prune resources as the last step
       - RespectIgnoreDifferences=true
+      - ServerSideApply=true  # Use server-side apply for better handling
     
     retry:
       limit: 5
@@ -57,59 +57,10 @@ spec:
   # Information about this app of apps
   info:
     - name: "Purpose"
-      value: "Manages the complete Pulumi Operator AWS demo suite"
+      value: "Manages the complete Pulumi Operator AWS demo suite with proper ordering"
     - name: "Components"
-      value: "Pulumi Kubernetes Operator + AWS Resources Stack"
-    - name: "Dependencies"
-      value: "Operator must be ready before stack deployment"
----
-# App of Apps with sync waves for proper ordering
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: pulumi-operator-aws-ordered
-  namespace: argocd
-  labels:
-    app.kubernetes.io/name: pulumi-operator-aws-ordered
-    app.kubernetes.io/component: app-of-apps-ordered
-    app.kubernetes.io/managed-by: argocd
-  annotations:
-    argocd.argoproj.io/link: "https://github.com/kjenney/pulumi-operator-aws"
-    argocd.argoproj.io/sync-wave: "0"  # Deploy first
-  finalizers:
-    - resources-finalizer.argocd.argoproj.io
-spec:
-  project: default
-  
-  source:
-    repoURL: https://github.com/kjenney/pulumi-operator-aws.git
-    targetRevision: HEAD
-    path: argocd/ordered
-    
-    directory:
-      recurse: true
-      include: "*.yaml"
-
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: argocd
-  
-  syncPolicy:
-    automated:
-      prune: false  # Don't auto-prune for ordered deployment
-      selfHeal: true
-      allowEmpty: false
-    
-    syncOptions:
-      - CreateNamespace=true
-      - PruneLast=true
-      - RespectIgnoreDifferences=true
-    
-    retry:
-      limit: 3
-      backoff:
-        duration: 10s
-        factor: 2
-        maxDuration: 5m
-  
-  revisionHistoryLimit: 5
+      value: "Pulumi Kubernetes Operator (Wave 1) + AWS Resources Stack (Wave 2)"
+    - name: "Deletion Order"
+      value: "Stack deleted first (Wave 2), then Operator (Wave 1) - ensures clean teardown"
+    - name: "Sync Waves"
+      value: "Operator: Wave 1, Stack: Wave 2 - proper dependency management"

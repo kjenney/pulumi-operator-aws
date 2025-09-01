@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: pulumi-aws-stack
     app.kubernetes.io/component: stack
     app.kubernetes.io/managed-by: argocd
-    app.kubernetes.io/part-of: pulumi-operator-aws-suite
+    app.kubernetes.io/part-of: pulumi-operator-aws
   annotations:
     argocd.argoproj.io/link: "https://github.com/kjenney/pulumi-operator-aws"
     argocd.argoproj.io/sync-wave: "2"  # Deploy after operator
