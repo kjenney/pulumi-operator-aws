@@ -490,6 +490,127 @@ cleanup_cluster() {
     fi
 }
 
+confirm_argocd_deletion() {
+    echo ""
+    log_info "ArgoCD may be installed in the cluster."
+    log_warning "ArgoCD can manage other applications beyond this demo."
+    echo ""
+    echo "Do you want to uninstall ArgoCD as well?"
+    echo "  • Choose 'yes' if this is a demo cluster and you're done with ArgoCD"
+    echo "  • Choose 'no' if you want to keep ArgoCD for other applications"
+    echo ""
+    read -p "Uninstall ArgoCD? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        return 0  # Proceed with ArgoCD uninstall
+    else
+        log_info "Keeping ArgoCD running..."
+        log_info "You can uninstall it later manually if needed."
+        return 1  # Skip ArgoCD uninstall
+    fi
+}
+
+uninstall_argocd() {
+    log_info "Uninstalling ArgoCD..."
+    
+    # Check if kubectl is available and cluster is accessible
+    if ! command -v kubectl &> /dev/null; then
+        log_warning "kubectl not found. Skipping ArgoCD uninstall."
+        return 0
+    fi
+    
+    if ! kubectl cluster-info &> /dev/null; then
+        log_warning "Cannot connect to Kubernetes cluster. Skipping ArgoCD uninstall."
+        return 0
+    fi
+    
+    # Check if ArgoCD is installed
+    local argocd_namespace="argocd"
+    if ! kubectl get namespace ${argocd_namespace} &> /dev/null; then
+        log_info "ArgoCD namespace not found. Skipping ArgoCD uninstall."
+        return 0
+    fi
+    
+    # Check if ArgoCD applications exist and warn user
+    local argocd_apps
+    argocd_apps=$(kubectl get applications -n ${argocd_namespace} --no-headers 2>/dev/null | wc -l || echo "0")
+    
+    if [[ "$argocd_apps" -gt 0 ]]; then
+        log_warning "Found ${argocd_apps} ArgoCD applications that will be deleted:"
+        kubectl get applications -n ${argocd_namespace} -o wide 2>/dev/null || true
+        echo ""
+        read -p "Continue with ArgoCD uninstall? This will delete all ArgoCD applications! (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Skipping ArgoCD uninstall due to existing applications."
+            return 0
+        fi
+    fi
+    
+    log_info "Removing ArgoCD applications..."
+    # Delete all ArgoCD applications first
+    kubectl delete applications --all -n ${argocd_namespace} --timeout=300s 2>/dev/null || true
+    
+    log_info "Removing ArgoCD components..."
+    # Delete ArgoCD installation
+    # Try to get the ArgoCD version to use the correct manifests
+    local argocd_version="stable"
+    
+    # Delete ArgoCD using the same manifests that were used to install
+    if kubectl get deployment argocd-server -n ${argocd_namespace} &> /dev/null; then
+        log_info "Deleting ArgoCD manifests..."
+        kubectl delete -n ${argocd_namespace} -f https://raw.githubusercontent.com/argoproj/argo-cd/${argocd_version}/manifests/install.yaml --timeout=300s 2>/dev/null || {
+            log_warning "Failed to delete via manifest, trying manual cleanup..."
+            
+            # Manual cleanup if manifest deletion fails
+            kubectl delete deployment --all -n ${argocd_namespace} --force --grace-period=0 2>/dev/null || true
+            kubectl delete replicaset --all -n ${argocd_namespace} --force --grace-period=0 2>/dev/null || true
+            kubectl delete pod --all -n ${argocd_namespace} --force --grace-period=0 2>/dev/null || true
+            kubectl delete service --all -n ${argocd_namespace} --timeout=60s 2>/dev/null || true
+            kubectl delete configmap --all -n ${argocd_namespace} --timeout=60s 2>/dev/null || true
+            kubectl delete secret --all -n ${argocd_namespace} --timeout=60s 2>/dev/null || true
+        }
+    fi
+    
+    log_info "Cleaning up ArgoCD CRDs and cluster resources..."
+    # Delete ArgoCD CRDs (only if they exist)
+    local argocd_crds=("applications.argoproj.io" "applicationsets.argoproj.io" "appprojects.argoproj.io")
+    for crd in "${argocd_crds[@]}"; do
+        if kubectl get crd ${crd} &> /dev/null; then
+            log_info "Deleting CRD: ${crd}"
+            kubectl delete crd ${crd} --timeout=120s 2>/dev/null || true
+        fi
+    done
+    
+    # Delete ClusterRoles and ClusterRoleBindings
+    log_info "Cleaning up ArgoCD RBAC resources..."
+    kubectl delete clusterrole -l app.kubernetes.io/part-of=argocd --timeout=60s 2>/dev/null || true
+    kubectl delete clusterrolebinding -l app.kubernetes.io/part-of=argocd --timeout=60s 2>/dev/null || true
+    
+    # Also try specific names in case labels don't work
+    local argocd_cluster_resources=("argocd-server" "argocd-application-controller" "argocd-applicationset-controller")
+    for resource in "${argocd_cluster_resources[@]}"; do
+        kubectl delete clusterrole ${resource} --timeout=60s 2>/dev/null || true
+        kubectl delete clusterrolebinding ${resource} --timeout=60s 2>/dev/null || true
+    done
+    
+    # Delete namespace last
+    log_info "Deleting ArgoCD namespace..."
+    kubectl delete namespace ${argocd_namespace} --timeout=300s 2>/dev/null || {
+        log_warning "Force deleting ArgoCD namespace..."
+        kubectl patch namespace ${argocd_namespace} -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+        kubectl delete namespace ${argocd_namespace} --force --grace-period=0 2>/dev/null || true
+    }
+    
+    # Clean up credentials file
+    if [[ -f "argocd-credentials.txt" ]]; then
+        log_info "Removing ArgoCD credentials file..."
+        rm -f argocd-credentials.txt
+    fi
+    
+    log_success "ArgoCD uninstalled!"
+}
+
 verify_aws_cleanup() {
     log_info "Verifying AWS resource cleanup..."
     
@@ -553,6 +674,15 @@ display_cleanup_summary() {
         echo "  • Kubernetes namespaces (kept for operator)"
     fi
     
+    # Show ArgoCD status based on what was actually done
+    if [[ "${argocd_uninstalled:-false}" == true ]]; then
+        echo "  ✓ ArgoCD and all applications"
+        echo "  ✓ ArgoCD credentials file"
+    else
+        echo "  • ArgoCD (kept running)"
+        echo "  • ArgoCD applications (kept for GitOps)"
+    fi
+    
     if [[ "${delete_cluster:-false}" == true ]]; then
         echo "  ✓ Local Kubernetes cluster"
     fi
@@ -568,6 +698,18 @@ display_cleanup_summary() {
         echo "  • To uninstall it later, run this script again"
         echo "  • Or use: helm uninstall pulumi-kubernetes-operator -n ${OPERATOR_NAMESPACE}"
         echo ""
+    fi
+    
+    if [[ "${argocd_uninstalled:-false}" != true ]]; then
+        # Only show ArgoCD info if it's actually installed
+        if kubectl get namespace argocd &> /dev/null 2>&1; then
+            log_info "ArgoCD is still running:"
+            echo "  • ArgoCD can manage other applications via GitOps"
+            echo "  • To uninstall it later, run this script again"
+            echo "  • Or manually: kubectl delete -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
+            echo "  • Then: kubectl delete namespace argocd"
+            echo ""
+        fi
     fi
     
     log_warning "Important reminders:"
@@ -602,6 +744,16 @@ main() {
         log_info "Skipping operator uninstall and namespace cleanup..."
         log_info "Note: Operator and stack namespaces will remain."
         operator_uninstalled=false
+    fi
+    
+    # Ask user if they want to uninstall ArgoCD
+    if confirm_argocd_deletion; then
+        uninstall_argocd
+        argocd_uninstalled=true
+    else
+        log_info "Skipping ArgoCD uninstall..."
+        log_info "Note: ArgoCD and its applications will remain."
+        argocd_uninstalled=false
     fi
     
     cleanup_cluster
