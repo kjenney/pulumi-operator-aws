@@ -122,22 +122,22 @@ resources:
       enabled: false
     # Create Internet Gateway for the VPC
     internetGateway:
-      enabled: true
+      enabled: false  # Disabled since VPC is disabled
     # Create public subnet in the VPC
     publicSubnet:
-      enabled: true
+      enabled: false  # Disabled since VPC is disabled
     # Create route table for public subnet
     routeTable:
-      enabled: true
+      enabled: false  # Disabled since VPC is disabled
     # Associate route table with public subnet
     routeTableAssociation:
-      enabled: true
+      enabled: false  # Disabled since VPC is disabled
   
   # Security Resources
   security:
     # Create security group for web servers (HTTP/HTTPS/SSH access)
     webSecurityGroup:
-      enabled: true
+      enabled: false  # Disabled since VPC is disabled
   
   # IAM Resources
   iam:
