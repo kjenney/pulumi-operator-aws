@@ -137,9 +137,10 @@ main() {
     echo ""
     log_info "This script will:"
     echo "  1. Set up a local Kubernetes cluster (kind)"
-    echo "  2. Install the Pulumi Kubernetes Operator"
-    echo "  3. Deploy the AWS resources stack"
-    echo "  4. Optionally install ArgoCD for GitOps"
+    echo "  2. Optionally install ArgoCD for GitOps"
+    echo "  3. Deploy either via GitOps (App of Apps) or direct installation"
+    echo "     • GitOps: ArgoCD manages Pulumi Operator + AWS stack"  
+    echo "     • Direct: Traditional script-based installation"
     echo ""
     log_warning "This will create AWS resources that may incur charges"
     echo ""
@@ -154,21 +155,43 @@ main() {
     # Step 1: Setup cluster
     run_script "setup-cluster.sh"
     
-    # Step 2: Install operator
-    run_script "install-operator.sh"
-    
-    # Step 3: Deploy stack
-    run_script "deploy-stack.sh"
-    
-    # Step 4: Optional ArgoCD installation
+    # Step 2: Optional ArgoCD installation
     echo ""
     read -p "Do you want to install ArgoCD for GitOps? (y/N): " -n 1 -r
     echo
+    argocd_installed=false
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         run_script "install-argocd.sh"
+        argocd_installed=true
+        
+        # Step 2.5: Deploy App of Apps after ArgoCD is installed
+        echo ""
+        read -p "Do you want to deploy the Pulumi stack via ArgoCD App of Apps? (Y/n): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            run_script "deploy-app-of-apps.sh"
+            gitops_deployed=true
+        else
+            log_info "Skipping App of Apps deployment"
+            log_info "You can deploy it later with: ./scripts/deploy-app-of-apps.sh"
+            gitops_deployed=false
+        fi
     else
         log_info "Skipping ArgoCD installation"
         log_info "You can install it later with: ./scripts/install-argocd.sh"
+        gitops_deployed=false
+    fi
+    
+    # Step 3: Install operator and deploy stack (skip if using GitOps)
+    if [[ "${gitops_deployed:-false}" != true ]]; then
+        log_step "Installing Pulumi Operator and deploying stack directly"
+        run_script "install-operator.sh"
+        run_script "deploy-stack.sh"
+        traditional_deployment=true
+    else
+        log_info "Skipping direct installation - using GitOps deployment instead"
+        log_info "Monitor progress: kubectl get applications -n argocd"
+        traditional_deployment=false
     fi
     
     # Success message
@@ -177,20 +200,37 @@ main() {
     echo ""
     log_info "What was set up:"
     echo "  ✓ Local Kubernetes cluster (kind)"
-    echo "  ✓ Pulumi Kubernetes Operator"
-    echo "  ✓ AWS resources stack deployed"
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    
+    if [[ "${argocd_installed:-false}" == true ]]; then
         echo "  ✓ ArgoCD for GitOps management"
+    fi
+    
+    if [[ "${gitops_deployed:-false}" == true ]]; then
+        echo "  ✓ App of Apps pattern deployment"
+        echo "  ✓ Pulumi Kubernetes Operator (via GitOps)"
+        echo "  ✓ AWS resources stack (via GitOps)"
+    elif [[ "${traditional_deployment:-false}" == true ]]; then
+        echo "  ✓ Pulumi Kubernetes Operator (direct installation)"
+        echo "  ✓ AWS resources stack (direct deployment)"
     fi
     echo ""
     log_info "Next steps:"
-    echo "  • Check the stack status: kubectl get stacks -n pulumi-aws-demo"
-    echo "  • View workspace pod logs: kubectl logs -n pulumi-aws-demo -l pulumi.com/stack-name=aws-resources"
-    echo "  • Check AWS console for created resources"
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    
+    if [[ "${gitops_deployed:-false}" == true ]]; then
+        echo "  • Monitor GitOps deployments: kubectl get applications -n argocd"
         echo "  • Access ArgoCD UI (see credentials in argocd-credentials.txt)"
-        echo "  • Deploy via GitOps: kubectl apply -f argocd/app-of-apps.yaml"
+        echo "  • Wait for stack deployment: kubectl get stacks -n pulumi-aws-demo -w"
+        echo "  • Check workspace pod logs: kubectl logs -n pulumi-aws-demo -l pulumi.com/stack-name=aws-resources -f"
+    elif [[ "${traditional_deployment:-false}" == true ]]; then
+        echo "  • Check the stack status: kubectl get stacks -n pulumi-aws-demo"
+        echo "  • View workspace pod logs: kubectl logs -n pulumi-aws-demo -l pulumi.com/stack-name=aws-resources"
+        if [[ "${argocd_installed:-false}" == true ]]; then
+            echo "  • Access ArgoCD UI (see credentials in argocd-credentials.txt)"
+            echo "  • Optionally migrate to GitOps: ./scripts/deploy-app-of-apps.sh"
+        fi
     fi
+    
+    echo "  • Check AWS console for created resources"
     echo "  • When done, run: ./scripts/cleanup.sh"
     echo ""
     log_warning "Remember: AWS resources are running and may incur charges!"

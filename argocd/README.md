@@ -16,6 +16,7 @@ The ArgoCD setup provides several deployment options:
 2. **Git repository** containing this code (update repository URLs in manifests)
 3. **AWS credentials** configured as Kubernetes secrets
 4. **Storage class** available for persistent volumes
+5. **ArgoCD with OCI registry support** (ArgoCD 2.4+ recommended)
 
 ## Quick Start
 
@@ -57,23 +58,35 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 ### 4. Deploy Applications
 
-Choose one of the deployment methods:
+The ArgoCD installation script can automatically deploy the App of Apps, or you can deploy manually:
 
-#### Option A: App of Apps (Recommended)
+#### Option A: Automatic Deployment (Recommended)
+
+When running the ArgoCD installation script, choose "Yes" when prompted to deploy the App of Apps:
 
 ```bash
-# Deploy the App of Apps
-kubectl apply -f argocd/app-of-apps.yaml
+# This will install ArgoCD and optionally deploy the App of Apps
+./scripts/install-argocd.sh
 ```
 
-#### Option B: Ordered Deployment with Sync Waves
+#### Option B: Manual App of Apps Deployment
+
+```bash
+# Deploy the App of Apps manually
+kubectl apply -f argocd/app-of-apps.yaml
+
+# Or use the dedicated script
+./scripts/deploy-app-of-apps.sh
+```
+
+#### Option C: Ordered Deployment with Sync Waves
 
 ```bash
 # Deploy ordered apps for controlled sequencing
 kubectl apply -f argocd/ordered/
 ```
 
-#### Option C: Individual Applications
+#### Option D: Individual Applications
 
 ```bash
 # Deploy operator first

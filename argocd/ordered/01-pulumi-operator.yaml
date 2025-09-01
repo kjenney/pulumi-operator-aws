@@ -17,17 +17,18 @@ spec:
   project: default
   
   source:
-    repoURL: https://pulumi.github.io/pulumi-kubernetes-operator/
+    repoURL: oci://ghcr.io/pulumi/helm-charts
     chart: pulumi-kubernetes-operator
-    targetRevision: "1.15.0"
+    targetRevision: "2.2.0"
     
     helm:
       releaseName: pulumi-kubernetes-operator
       values: |
-        image:
-          repository: pulumi/pulumi-kubernetes-operator
-          tag: "v1.15.0"
-          pullPolicy: IfNotPresent
+        operator:
+          gracefulShutdownTimeoutDuration: 5m
+          maxConcurrentReconciles: 10
+          leaderElection:
+            enabled: true
         
         resources:
           limits:
@@ -61,28 +62,30 @@ spec:
           runAsUser: 65532
           runAsGroup: 65532
         
-        env:
-          - name: LOG_LEVEL
-            value: "info"
-          - name: METRICS_ADDR
-            value: ":8080"
-          - name: ENABLE_LEADER_ELECTION
-            value: "true"
+        # Security context configuration
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
         
-        metrics:
-          enabled: true
-          port: 8080
+        # Pod security context
+        podSecurityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          fsGroup: 65532
         
-        webhook:
-          enabled: true
-          port: 9443
-          certManager:
-            enabled: false
+        # Node selector and tolerations
+        nodeSelector: {}
+        tolerations: []
+        affinity: {}
         
-        podDisruptionBudget:
-          enabled: true
-          minAvailable: 1
-        
+        # Replica count
         replicaCount: 1
 
   destination:

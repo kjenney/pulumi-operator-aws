@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/managed-by: argocd
   annotations:
     # Link to project documentation
-    argocd.argoproj.io/link: "https://github.com/your-org/pulumi-operator-aws"
+    argocd.argoproj.io/link: "https://github.com/kjenney/pulumi-operator-aws"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
@@ -19,7 +19,7 @@ spec:
   # Source configuration - Git repository containing the Helm chart
   source:
     # Update this to your Git repository URL
-    repoURL: https://github.com/your-org/pulumi-operator-aws.git
+    repoURL: https://github.com/kjenney/pulumi-operator-aws.git
     targetRevision: HEAD  # Can be branch, tag, or commit SHA
     path: stack-chart  # Path to the Helm chart in the repository
     
