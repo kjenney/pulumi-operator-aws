@@ -47,6 +47,8 @@ spec:
       - RespectIgnoreDifferences=true
       - ApplyOutOfSyncOnly=true
       - SkipDryRunOnMissingResource=true  # Skip dry run if CRDs aren't ready yet
+      - Delete=true  # Allow deletion of resources
+      - Prune=true   # Allow pruning of resources
     
     retry:
       limit: 3  # Fewer retries for stack deployment

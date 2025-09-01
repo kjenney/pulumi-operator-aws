@@ -5,6 +5,9 @@ metadata:
   namespace: {{ .Values.global.namespace.name }}
   labels:
     {{- include "pulumi-operator-aws.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   # The stack name in format: organization/project/stack
   stack: "{{ .Values.pulumi.stack.name }}"
