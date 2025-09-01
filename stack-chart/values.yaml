@@ -174,7 +174,7 @@ rbac:
     additionalRules: []
 
 # Operator namespace (where the operator itself runs)
-operatorNamespace: pulumi-kubernetes-operator
+operatorNamespace: pulumi-system
 
 # ConfigMap configuration for the Pulumi program
 configMap:

@@ -12,9 +12,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration - support both old and new environment variable patterns
-OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-pulumi-system}"
-STACK_NAMESPACE="${STACK_NAMESPACE:-pulumi-aws-demo}"
+OPERATOR_NAMESPACE="pulumi-system"
+STACK_NAMESPACE="pulumi-aws"
 # Support legacy NAMESPACE variable for backwards compatibility
 if [[ -n "${NAMESPACE:-}" ]]; then
     STACK_NAMESPACE="${NAMESPACE}"
@@ -75,24 +74,6 @@ load_environment() {
         set -a
         source "$env_file" 2>/dev/null || true
         set +a
-        
-        # Update all variables from environment with fallbacks
-        OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-pulumi-system}"
-        STACK_NAMESPACE="${STACK_NAMESPACE:-pulumi-aws-demo}"
-        CLUSTER_NAME="${CLUSTER_NAME:-pulumi-aws-demo}"
-        STACK_NAME="${STACK_NAME:-aws-resources}"
-        PROJECT_NAME="${PROJECT_NAME:-aws-resources}"
-        
-        # Handle legacy NAMESPACE variable
-        if [[ -n "${NAMESPACE:-}" ]]; then
-            STACK_NAMESPACE="$NAMESPACE"
-        fi
-        
-        log_info "Configuration loaded from .env:"
-        log_info "  • Operator namespace: ${OPERATOR_NAMESPACE}"
-        log_info "  • Stack namespace: ${STACK_NAMESPACE}"
-        log_info "  • Cluster name: ${CLUSTER_NAME}"
-        log_info "  • Project name: ${PROJECT_NAME}"
     else
         log_info "No .env file found, using default configuration"
     fi
@@ -303,56 +284,6 @@ cleanup_kubernetes_resources() {
     fi
     
     log_success "Kubernetes resources cleaned up!"
-}
-
-cleanup_namespaces() {
-    log_info "Cleaning up namespaces..."
-    
-    # Check if kubectl is available and cluster is accessible
-    if ! command -v kubectl &> /dev/null; then
-        log_warning "kubectl not found. Skipping namespace cleanup."
-        return 0
-    fi
-    
-    if ! kubectl cluster-info &> /dev/null; then
-        log_warning "Cannot connect to Kubernetes cluster. Skipping namespace cleanup."
-        return 0
-    fi
-    
-    # List of namespaces to potentially delete
-    local namespaces_to_delete=("${STACK_NAMESPACE}")
-    
-    # Only delete operator namespace if it's not a system namespace
-    if [[ "${OPERATOR_NAMESPACE}" != "kube-system" ]] && [[ "${OPERATOR_NAMESPACE}" != "default" ]]; then
-        namespaces_to_delete+=("${OPERATOR_NAMESPACE}")
-    fi
-    
-    # Also include common operator namespaces
-    namespaces_to_delete+=("pulumi-system" "pulumi-kubernetes-operator")
-    
-    # Remove duplicates and delete namespaces
-    local unique_namespaces
-    unique_namespaces=$(printf '%s\n' "${namespaces_to_delete[@]}" | sort -u)
-    
-    while IFS= read -r ns; do
-        [[ -n "$ns" ]] || continue
-        
-        # Skip system namespaces
-        if [[ "$ns" == "kube-system" ]] || [[ "$ns" == "default" ]] || [[ "$ns" == "kube-public" ]] || [[ "$ns" == "kube-node-lease" ]]; then
-            continue
-        fi
-        
-        if kubectl get namespace ${ns} &> /dev/null; then
-            log_info "Deleting namespace: $ns"
-            kubectl delete namespace ${ns} --ignore-not-found=true --timeout=300s || {
-                log_warning "Force deleting namespace $ns..."
-                kubectl patch namespace ${ns} -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-                kubectl delete namespace ${ns} --force --grace-period=0 2>/dev/null || true
-            }
-        fi
-    done <<< "$unique_namespaces"
-    
-    log_success "Namespaces cleaned up!"
 }
 
 cleanup_cluster() {
@@ -796,14 +727,6 @@ display_cleanup_summary() {
     echo "  • Operator namespace: ${OPERATOR_NAMESPACE}"
     echo "  • Stack namespace: ${STACK_NAMESPACE}"
     echo ""
-    
-    if [[ "${operator_uninstalled:-false}" != true ]]; then
-        log_info "Pulumi Kubernetes Operator is still running:"
-        echo "  • The operator can manage other Pulumi stacks"
-        echo "  • To uninstall it later, run this script again"
-        echo "  • Or use: helm uninstall pulumi-kubernetes-operator -n ${OPERATOR_NAMESPACE}"
-        echo ""
-    fi
     
     if [[ "${argocd_uninstalled:-false}" != true ]]; then
         # Only show ArgoCD info if it's actually installed
