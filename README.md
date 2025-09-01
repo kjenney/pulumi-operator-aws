@@ -2,9 +2,7 @@
 
 This project demonstrates how to deploy AWS resources using the Pulumi Kubernetes Operator (PKO) v2.0+ on a local Kubernetes cluster. This project uses a **local backend** for Pulumi to eliminate external dependencies and ensure repeatability.
 
-## 🚀 Quick Start
-
-### Prerequisites
+## Prerequisites
 
 1. **Docker** - For running the local Kubernetes cluster
 2. **kind** or **minikube** - For the local Kubernetes cluster
@@ -13,9 +11,11 @@ This project demonstrates how to deploy AWS resources using the Pulumi Kubernete
 5. **AWS CLI** - For AWS credentials configuration
 6. **Pulumi CLI** - For local testing (optional)
 
-Install everything by running `./scripts/quickstart.sh`.
+## 🚀 Quick Start
 
-Access ArgoCD at https://argocd.localhost:8443.
+1. Install everything by running `./scripts/quickstart.sh`.
+2. Add `127.0.0.1       argocd.localhost` to your `/etc/hosts` file.
+3. Access ArgoCD at https://argocd.localhost:8443.
 
 ## Optional setup
 
