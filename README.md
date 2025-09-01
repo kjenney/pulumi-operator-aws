@@ -13,6 +13,8 @@ This project demonstrates how to deploy AWS resources using the Pulumi Kubernete
 5. **AWS CLI** - For AWS credentials configuration
 6. **Pulumi CLI** - For local testing (optional)
 
+Install everything by running `./scripts/quickstart.sh`.
+
 ## Optional setup
 
 The Pulumi container image is rather large, so to speed up the loading of stack resources it has beem saved locally. The image is loaded into the Kubernetes cluster on creation if a specific files exists. The file name is `pulumi-image.tar`. Use `docker save pulumi/pulumi:latest-nonroot -o pulumi-image.tar` to create the file. 
@@ -34,6 +36,7 @@ The Pulumi container image is rather large, so to speed up the loading of stack 
    ```bash
    ./scripts/setup-cluster.sh
    ./scripts/install-operator.sh
+   ./scripts/install-argocd.sh
    ```
 
 4. **Deploy using Helm:**

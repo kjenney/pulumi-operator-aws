@@ -60,3 +60,4 @@ temp-*
 tmp-*
 
 pulumi-image.tar
+argocd-credentials.txt

@@ -1,0 +1,170 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pulumi-aws-stack
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: pulumi-aws-stack
+    app.kubernetes.io/component: application
+    app.kubernetes.io/managed-by: argocd
+  annotations:
+    # Link to project documentation
+    argocd.argoproj.io/link: "https://github.com/your-org/pulumi-operator-aws"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # The project the application belongs to
+  project: default
+  
+  # Source configuration - Git repository containing the Helm chart
+  source:
+    # Update this to your Git repository URL
+    repoURL: https://github.com/your-org/pulumi-operator-aws.git
+    targetRevision: HEAD  # Can be branch, tag, or commit SHA
+    path: stack-chart  # Path to the Helm chart in the repository
+    
+    # Helm configuration
+    helm:
+      # Release name
+      releaseName: pulumi-aws-stack
+      
+      # Values files to use (in order of precedence)
+      valueFiles:
+        - values.yaml
+      
+      # Override values directly (highest precedence)
+      values: |
+        # Global configuration
+        global:
+          namespace:
+            name: pulumi-aws-demo
+        
+        # AWS Configuration - these will be populated by external secrets or manual setup
+        aws:
+          region: us-west-2
+          credentials:
+            secretName: aws-credentials
+        
+        # Pulumi Configuration
+        pulumi:
+          backend:
+            useLocal: true
+            persistence:
+              enabled: true
+              storageClass: ""  # Use default storage class
+              size: "10Gi"
+          
+          stack:
+            name: aws-resources
+            destroyOnFinalize: true
+            resyncFrequencySeconds: 300  # 5 minutes for GitOps
+        
+        # AWS Resources - customize based on your needs
+        resources:
+          s3:
+            bucket:
+              enabled: true
+            publicAccessBlock:
+              enabled: true
+          vpc:
+            vpc:
+              enabled: true
+            internetGateway:
+              enabled: true
+            publicSubnet:
+              enabled: true
+            routeTable:
+              enabled: true
+            routeTableAssociation:
+              enabled: true
+          security:
+            webSecurityGroup:
+              enabled: true
+          iam:
+            ec2Role:
+              enabled: false  # Disabled by default for GitOps
+            s3Policy:
+              enabled: false
+            rolePolicyAttachment:
+              enabled: false
+            instanceProfile:
+              enabled: false
+      
+      # Helm parameters (alternative to values)
+      parameters: []
+      
+      # Skip CRD installation if they're managed elsewhere
+      skipCrds: false
+      
+      # Timeout for Helm operations
+      timeout: 10m
+
+  # Destination configuration
+  destination:
+    server: https://kubernetes.default.svc  # In-cluster deployment
+    namespace: pulumi-aws-demo  # Target namespace for the application
+  
+  # Sync policy
+  syncPolicy:
+    # Automatically sync when changes are detected
+    automated:
+      # Automatically create namespace if it doesn't exist
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    
+    # Sync options
+    syncOptions:
+      - CreateNamespace=true  # Create the namespace if it doesn't exist
+      - PruneLast=true        # Prune resources as the last step
+      - RespectIgnoreDifferences=true
+      - ApplyOutOfSyncOnly=true  # Only apply resources that are out of sync
+    
+    # Retry configuration for failed syncs
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+    
+    # Hooks for managing sync lifecycle
+    managedNamespaceMetadata:
+      labels:
+        name: pulumi-aws-demo
+        managed-by: argocd
+        environment: demo
+      annotations:
+        argocd.argoproj.io/sync-options: CreateNamespace=true
+  
+  # Ignore differences for certain fields that may change dynamically
+  ignoreDifferences:
+    # Ignore status fields that are updated by controllers
+    - group: pulumi.com
+      kind: Stack
+      jsonPointers:
+        - /status
+    
+    # Ignore certain metadata that may be updated by Kubernetes
+    - group: ""
+      kind: Secret
+      jsonPointers:
+        - /metadata/annotations/kubectl.kubernetes.io~1last-applied-configuration
+    
+    # Ignore PVC storage size changes (can only increase)
+    - group: ""
+      kind: PersistentVolumeClaim
+      jsonPointers:
+        - /spec/resources/requests/storage
+  
+  # Health assessment configuration
+  revisionHistoryLimit: 10
+  
+  # Notifications and alerts (configure webhooks in ArgoCD settings)
+  info:
+    - name: "Pulumi Stack Status"
+      value: "Monitor the Stack resource status in the target namespace"
+    - name: "AWS Resources"
+      value: "Check AWS console for created resources"
+    - name: "Workspace Logs"
+      value: "kubectl logs -n pulumi-aws-demo -l pulumi.com/stack-name=aws-resources"

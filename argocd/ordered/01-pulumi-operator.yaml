@@ -1,0 +1,143 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pulumi-kubernetes-operator
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: pulumi-kubernetes-operator
+    app.kubernetes.io/component: operator
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/part-of: pulumi-operator-aws-suite
+  annotations:
+    argocd.argoproj.io/link: "https://github.com/pulumi/pulumi-kubernetes-operator"
+    argocd.argoproj.io/sync-wave: "1"  # Deploy first
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  
+  source:
+    repoURL: https://pulumi.github.io/pulumi-kubernetes-operator/
+    chart: pulumi-kubernetes-operator
+    targetRevision: "1.15.0"
+    
+    helm:
+      releaseName: pulumi-kubernetes-operator
+      values: |
+        image:
+          repository: pulumi/pulumi-kubernetes-operator
+          tag: "v1.15.0"
+          pullPolicy: IfNotPresent
+        
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        
+        serviceAccount:
+          create: true
+          name: ""
+          annotations: {}
+        
+        rbac:
+          create: true
+        
+        podSecurityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          fsGroup: 65532
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+        
+        env:
+          - name: LOG_LEVEL
+            value: "info"
+          - name: METRICS_ADDR
+            value: ":8080"
+          - name: ENABLE_LEADER_ELECTION
+            value: "true"
+        
+        metrics:
+          enabled: true
+          port: 8080
+        
+        webhook:
+          enabled: true
+          port: 9443
+          certManager:
+            enabled: false
+        
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 1
+        
+        replicaCount: 1
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pulumi-kubernetes-operator
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+    
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+    
+    managedNamespaceMetadata:
+      labels:
+        name: pulumi-kubernetes-operator
+        managed-by: argocd
+        component: operator
+      annotations:
+        argocd.argoproj.io/sync-options: CreateNamespace=true
+  
+  ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionWebhook
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+    
+    - group: admissionregistration.k8s.io
+      kind: MutatingAdmissionWebhook
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+    
+    - group: ""
+      kind: Secret
+      jsonPointers:
+        - /metadata/annotations/kubectl.kubernetes.io~1last-applied-configuration
+  
+  revisionHistoryLimit: 10
+  
+  info:
+    - name: "Deployment Order"
+      value: "Wave 1 - Operator deployed first"
+    - name: "Health Check"
+      value: "kubectl get deployment -n pulumi-kubernetes-operator"
+    - name: "CRDs"
+      value: "kubectl get crds | grep pulumi.com"

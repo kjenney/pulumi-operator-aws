@@ -1,0 +1,179 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pulumi-kubernetes-operator
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: pulumi-kubernetes-operator
+    app.kubernetes.io/component: operator
+    app.kubernetes.io/managed-by: argocd
+  annotations:
+    # Link to operator documentation
+    argocd.argoproj.io/link: "https://github.com/pulumi/pulumi-kubernetes-operator"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # The project the application belongs to
+  project: default
+  
+  # Source configuration - Pulumi Operator Helm Chart
+  source:
+    # Official Pulumi Helm repository
+    repoURL: https://pulumi.github.io/pulumi-kubernetes-operator/
+    chart: pulumi-kubernetes-operator
+    targetRevision: "1.15.0"  # Specify version for production use
+    
+    # Helm configuration
+    helm:
+      # Release name
+      releaseName: pulumi-kubernetes-operator
+      
+      # Override values for the operator
+      values: |
+        # Image configuration
+        image:
+          repository: pulumi/pulumi-kubernetes-operator
+          tag: "v1.15.0"  # Match targetRevision
+          pullPolicy: IfNotPresent
+        
+        # Resource limits and requests
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        
+        # Service account configuration
+        serviceAccount:
+          create: true
+          name: ""
+          annotations: {}
+        
+        # RBAC configuration
+        rbac:
+          create: true
+        
+        # Pod security context
+        podSecurityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          fsGroup: 65532
+        
+        # Security context for containers
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+        
+        # Node selector and tolerations
+        nodeSelector: {}
+        tolerations: []
+        affinity: {}
+        
+        # Logging configuration
+        env:
+          - name: LOG_LEVEL
+            value: "info"
+          - name: METRICS_ADDR
+            value: ":8080"
+          - name: ENABLE_LEADER_ELECTION
+            value: "true"
+        
+        # Metrics and monitoring
+        metrics:
+          enabled: true
+          port: 8080
+        
+        # Webhook configuration
+        webhook:
+          enabled: true
+          port: 9443
+          certManager:
+            enabled: false  # Set to true if cert-manager is available
+        
+        # Pod disruption budget
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 1
+        
+        # Replica count
+        replicaCount: 1
+      
+      # Helm parameters (alternative to values)
+      parameters: []
+
+  # Destination configuration
+  destination:
+    server: https://kubernetes.default.svc  # In-cluster deployment
+    namespace: pulumi-kubernetes-operator  # Operator namespace
+  
+  # Sync policy
+  syncPolicy:
+    # Automatically sync when changes are detected
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    
+    # Sync options
+    syncOptions:
+      - CreateNamespace=true  # Create the namespace if it doesn't exist
+      - PruneLast=true        # Prune resources as the last step
+      - ServerSideApply=true  # Use server-side apply for CRDs
+      - RespectIgnoreDifferences=true
+    
+    # Retry configuration for failed syncs
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+    
+    # Hooks for managing sync lifecycle
+    managedNamespaceMetadata:
+      labels:
+        name: pulumi-kubernetes-operator
+        managed-by: argocd
+        component: operator
+      annotations:
+        argocd.argoproj.io/sync-options: CreateNamespace=true
+  
+  # Ignore differences for certain fields
+  ignoreDifferences:
+    # Ignore webhook CA bundle as it's managed by the operator
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionWebhook
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+    
+    - group: admissionregistration.k8s.io
+      kind: MutatingAdmissionWebhook
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+    
+    # Ignore certain metadata annotations
+    - group: ""
+      kind: Secret
+      jsonPointers:
+        - /metadata/annotations/kubectl.kubernetes.io~1last-applied-configuration
+  
+  # Health assessment - ensure operator is ready before deploying stacks
+  revisionHistoryLimit: 10
+  
+  # Information for operators
+  info:
+    - name: "Operator Status"
+      value: "Check operator pod logs: kubectl logs -n pulumi-kubernetes-operator -l app.kubernetes.io/name=pulumi-kubernetes-operator"
+    - name: "CRDs"
+      value: "kubectl get crds | grep pulumi.com"
+    - name: "Webhooks"
+      value: "kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration | grep pulumi"

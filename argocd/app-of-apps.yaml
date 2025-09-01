@@ -1,0 +1,115 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pulumi-operator-aws-suite
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: pulumi-operator-aws-suite
+    app.kubernetes.io/component: app-of-apps
+    app.kubernetes.io/managed-by: argocd
+  annotations:
+    argocd.argoproj.io/link: "https://github.com/your-org/pulumi-operator-aws"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # The project the application belongs to
+  project: default
+  
+  # Source configuration - this repository containing ArgoCD manifests
+  source:
+    # Update this to your Git repository URL
+    repoURL: https://github.com/your-org/pulumi-operator-aws.git
+    targetRevision: HEAD
+    path: argocd  # Path to ArgoCD manifests
+    
+    # Directory configuration
+    directory:
+      recurse: false  # Don't recurse into subdirectories
+      include: "*.yaml"  # Only include YAML files
+      exclude: "app-of-apps.yaml"  # Don't include this file itself
+
+  # Destination configuration
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd  # ArgoCD applications go in the argocd namespace
+  
+  # Sync policy for the app of apps
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    
+    syncOptions:
+      - PruneLast=true
+      - RespectIgnoreDifferences=true
+    
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  # Health assessment
+  revisionHistoryLimit: 10
+  
+  # Information about this app of apps
+  info:
+    - name: "Purpose"
+      value: "Manages the complete Pulumi Operator AWS demo suite"
+    - name: "Components"
+      value: "Pulumi Kubernetes Operator + AWS Resources Stack"
+    - name: "Dependencies"
+      value: "Operator must be ready before stack deployment"
+---
+# App of Apps with sync waves for proper ordering
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pulumi-operator-aws-ordered
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: pulumi-operator-aws-ordered
+    app.kubernetes.io/component: app-of-apps-ordered
+    app.kubernetes.io/managed-by: argocd
+  annotations:
+    argocd.argoproj.io/link: "https://github.com/your-org/pulumi-operator-aws"
+    argocd.argoproj.io/sync-wave: "0"  # Deploy first
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/your-org/pulumi-operator-aws.git
+    targetRevision: HEAD
+    path: argocd/ordered
+    
+    directory:
+      recurse: true
+      include: "*.yaml"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  
+  syncPolicy:
+    automated:
+      prune: false  # Don't auto-prune for ordered deployment
+      selfHeal: true
+      allowEmpty: false
+    
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+      - RespectIgnoreDifferences=true
+    
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+  
+  revisionHistoryLimit: 5

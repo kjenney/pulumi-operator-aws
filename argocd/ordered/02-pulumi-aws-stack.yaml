@@ -1,0 +1,164 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pulumi-aws-stack
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: pulumi-aws-stack
+    app.kubernetes.io/component: stack
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/part-of: pulumi-operator-aws-suite
+  annotations:
+    argocd.argoproj.io/link: "https://github.com/your-org/pulumi-operator-aws"
+    argocd.argoproj.io/sync-wave: "2"  # Deploy after operator
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/your-org/pulumi-operator-aws.git
+    targetRevision: HEAD
+    path: stack-chart
+    
+    helm:
+      releaseName: pulumi-aws-stack
+      
+      valueFiles:
+        - values.yaml
+      
+      values: |
+        global:
+          namespace:
+            name: pulumi-aws-demo
+        
+        aws:
+          region: us-west-2
+          credentials:
+            secretName: aws-credentials
+        
+        pulumi:
+          backend:
+            useLocal: true
+            persistence:
+              enabled: true
+              storageClass: ""
+              size: "10Gi"
+              annotations:
+                # Add backup annotations for production
+                backup.kubernetes.io/policy: "daily"
+          
+          stack:
+            name: aws-resources
+            destroyOnFinalize: true
+            resyncFrequencySeconds: 300  # 5 minutes for GitOps
+        
+        resources:
+          s3:
+            bucket:
+              enabled: true
+            publicAccessBlock:
+              enabled: true
+          vpc:
+            vpc:
+              enabled: true
+            internetGateway:
+              enabled: true
+            publicSubnet:
+              enabled: true
+            routeTable:
+              enabled: true
+            routeTableAssociation:
+              enabled: true
+          security:
+            webSecurityGroup:
+              enabled: true
+          iam:
+            ec2Role:
+              enabled: false  # Often disabled in GitOps for security
+            s3Policy:
+              enabled: false
+            rolePolicyAttachment:
+              enabled: false
+            instanceProfile:
+              enabled: false
+      
+      parameters: []
+      skipCrds: false
+      timeout: 15m  # Longer timeout for AWS resource creation
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pulumi-aws-demo
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false  # Disable self-heal to prevent accidental AWS resource changes
+      allowEmpty: false
+    
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+      - RespectIgnoreDifferences=true
+      - ApplyOutOfSyncOnly=true
+      - SkipDryRunOnMissingResource=true  # Skip dry run if CRDs aren't ready yet
+    
+    retry:
+      limit: 3  # Fewer retries for stack deployment
+      backoff:
+        duration: 30s  # Longer backoff for AWS operations
+        factor: 2
+        maxDuration: 10m
+    
+    managedNamespaceMetadata:
+      labels:
+        name: pulumi-aws-demo
+        managed-by: argocd
+        component: pulumi-stack
+        environment: demo
+      annotations:
+        argocd.argoproj.io/sync-options: CreateNamespace=true
+  
+  ignoreDifferences:
+    - group: pulumi.com
+      kind: Stack
+      jsonPointers:
+        - /status
+        - /metadata/annotations/pulumi.com~1last-applied-configuration
+    
+    - group: ""
+      kind: Secret
+      jsonPointers:
+        - /metadata/annotations/kubectl.kubernetes.io~1last-applied-configuration
+    
+    - group: ""
+      kind: PersistentVolumeClaim
+      jsonPointers:
+        - /spec/resources/requests/storage
+        - /status
+    
+    # Ignore workspace pod changes as they're managed by the operator
+    - group: ""
+      kind: Pod
+      name: "*workspace*"
+      jsonPointers:
+        - /status
+        - /metadata/annotations
+  
+  revisionHistoryLimit: 5  # Keep fewer revisions for stacks
+  
+  info:
+    - name: "Deployment Order"
+      value: "Wave 2 - Stack deployed after operator"
+    - name: "Prerequisites"
+      value: "Operator must be healthy and CRDs installed"
+    - name: "Stack Status"
+      value: "kubectl get stack -n pulumi-aws-demo"
+    - name: "Workspace Logs"
+      value: "kubectl logs -n pulumi-aws-demo -l pulumi.com/stack-name=aws-resources"
+    - name: "AWS Resources"
+      value: "Check AWS console for created resources"
+    - name: "Backend Storage"
+      value: "kubectl get pvc -n pulumi-aws-demo"
