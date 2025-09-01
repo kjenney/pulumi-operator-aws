@@ -215,74 +215,6 @@ setup_argocd_access() {
     log_info "Credentials also saved to: argocd-credentials.txt"
 }
 
-deploy_app_of_apps() {
-    log_info "Deploying Pulumi Operator AWS App of Apps..."
-    
-    # Get the directory where this script is located
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local app_of_apps_file="${script_dir}/../argocd/app-of-apps.yaml"
-    
-    # Check if the app of apps file exists
-    if [[ ! -f "$app_of_apps_file" ]]; then
-        log_error "App of Apps file not found: $app_of_apps_file"
-        log_error "Please ensure the argocd directory exists with app-of-apps.yaml"
-        return 1
-    fi
-    
-    # Check if AWS credentials secret exists
-    log_info "Checking for AWS credentials..."
-    if ! kubectl get secret aws-credentials -n pulumi-aws-demo &> /dev/null; then
-        log_warning "AWS credentials secret not found in pulumi-aws-demo namespace"
-        log_info "Creating placeholder namespace and secret..."
-        
-        # Create namespace if it doesn't exist
-        kubectl create namespace pulumi-aws-demo --dry-run=client -o yaml | kubectl apply -f -
-        
-        # Check if AWS credentials are in environment
-        if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
-            log_info "Creating AWS credentials secret from environment variables..."
-            kubectl create secret generic aws-credentials \
-                --from-literal=AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
-                --from-literal=AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-                --from-literal=AWS_REGION="${AWS_REGION:-us-west-2}" \
-                -n pulumi-aws-demo
-        else
-            log_warning "AWS credentials not found in environment variables"
-            log_warning "Creating placeholder secret - you'll need to update it with real credentials"
-            kubectl create secret generic aws-credentials \
-                --from-literal=AWS_ACCESS_KEY_ID="your-access-key-here" \
-                --from-literal=AWS_SECRET_ACCESS_KEY="your-secret-key-here" \
-                --from-literal=AWS_REGION="us-west-2" \
-                -n pulumi-aws-demo
-        fi
-    fi
-    
-    # Apply the App of Apps
-    log_info "Applying App of Apps configuration..."
-    if kubectl apply -f "$app_of_apps_file"; then
-        log_success "App of Apps deployed successfully!"
-        
-        # Wait a moment for ArgoCD to process the application
-        sleep 5
-        
-        # Show the applications
-        log_info "ArgoCD Applications created:"
-        kubectl get applications -n argocd -o wide 2>/dev/null || true
-        
-        echo ""
-        log_info "Monitor deployment progress:"
-        echo "  • ArgoCD UI: Check the applications dashboard"
-        echo "  • CLI: kubectl get applications -n argocd"
-        echo "  • Watch: kubectl get applications -n argocd -w"
-        echo ""
-        log_warning "Note: The stack deployment will create AWS resources that may incur charges!"
-        
-    else
-        log_error "Failed to deploy App of Apps"
-        return 1
-    fi
-}
-
 check_existing_installation() {
     if kubectl get namespace ${ARGOCD_NAMESPACE} &> /dev/null; then
         if kubectl get deployment argocd-server -n ${ARGOCD_NAMESPACE} &> /dev/null; then
@@ -338,29 +270,11 @@ main() {
     # Setup access
     setup_argocd_access
     
-    echo ""
-    # Ask if user wants to deploy the app of apps
-    echo ""
-    read -p "Do you want to deploy the Pulumi Operator AWS suite via ArgoCD App of Apps? (Y/n): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-        log_info "Skipping App of Apps deployment"
-    else
-        deploy_app_of_apps
-    fi
-    
     log_success "🎉 ArgoCD installation completed successfully!"
     echo ""
     log_info "Next steps:"
     echo "  1. Access ArgoCD UI at the URL shown above"
     echo "  2. Login with the admin credentials"
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-        echo "  3. Monitor the App of Apps deployment in ArgoCD UI"
-        echo "  4. Check application status: kubectl get applications -n argocd"
-    else
-        echo "  3. Deploy manually: kubectl apply -f argocd/app-of-apps.yaml"
-        echo "  4. Or create ArgoCD Applications via the UI"
-    fi
     echo ""
     echo "  5. Access the ArgoCD UI at: https://argocd.localhost:8443"
 

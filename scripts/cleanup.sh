@@ -490,6 +490,72 @@ cleanup_cluster() {
     fi
 }
 
+handle_stuck_stacks() {
+    log_info "Checking for stuck Pulumi stacks with finalizers..."
+    
+    # Check if Stack CRD exists
+    if ! kubectl get crd stacks.pulumi.com &> /dev/null; then
+        log_info "Stack CRD not found, no stacks to handle"
+        return 0
+    fi
+    
+    # Find all stacks with finalizers that are being deleted
+    local stuck_stacks
+    stuck_stacks=$(kubectl get stacks --all-namespaces -o jsonpath='{range .items[?(@.metadata.deletionTimestamp)]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null || echo "")
+    
+    if [[ -z "$stuck_stacks" ]]; then
+        log_info "No stuck stacks found"
+        return 0
+    fi
+    
+    log_warning "Found stuck stacks with deletion timestamp but still present:"
+    while IFS= read -r stack_info; do
+        [[ -n "$stack_info" ]] || continue
+        local stack_ns=$(echo "$stack_info" | cut -d'/' -f1)
+        local stack_name=$(echo "$stack_info" | cut -d'/' -f2)
+        
+        log_info "Checking stuck stack: ${stack_name} in namespace ${stack_ns}"
+        
+        # Check stack status
+        local stack_status
+        stack_status=$(kubectl get stack ${stack_name} -n ${stack_ns} -o jsonpath='{.status.lastUpdate.state}' 2>/dev/null || echo "unknown")
+        
+        # Check if stack has finalizers
+        local has_finalizers
+        has_finalizers=$(kubectl get stack ${stack_name} -n ${stack_ns} -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
+        
+        log_info "Stack ${stack_name} status: ${stack_status}, finalizers: ${has_finalizers}"
+        
+        # If stack is stuck in processing and credentials are missing, remove finalizers
+        if [[ "$stack_status" == "failed" ]] || [[ "$stack_status" == "StackProcessing" ]]; then
+            # Check if AWS credentials secret exists
+            local creds_secret
+            creds_secret=$(kubectl get secret aws-credentials -n ${stack_ns} 2>/dev/null || echo "missing")
+            
+            if [[ "$creds_secret" == "missing" ]]; then
+                log_warning "Stack ${stack_name} is stuck and AWS credentials are missing"
+                log_info "Removing finalizers to allow deletion (AWS resources may need manual cleanup)"
+                
+                # Remove finalizers to allow deletion
+                if kubectl patch stack ${stack_name} -n ${stack_ns} -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null; then
+                    log_success "Finalizers removed from stack ${stack_name}"
+                else
+                    log_error "Failed to remove finalizers from stack ${stack_name}"
+                fi
+            else
+                log_info "AWS credentials are present, allowing stack to continue destruction process"
+            fi
+        fi
+        
+    done <<< "$stuck_stacks"
+    
+    # Wait a bit for finalizer removal to take effect
+    if [[ -n "$stuck_stacks" ]]; then
+        log_info "Waiting 30 seconds for finalizer removal to take effect..."
+        sleep 30
+    fi
+}
+
 cleanup_argocd_applications() {
     log_info "Cleaning up ArgoCD applications..."
     
@@ -511,124 +577,100 @@ cleanup_argocd_applications() {
         return 0
     fi
     
-    # Get list of ArgoCD applications
-    local argocd_apps
-    argocd_apps=$(kubectl get applications -n ${argocd_namespace} --no-headers -o custom-columns="NAME:.metadata.name" 2>/dev/null || echo "")
-    
-    if [[ -z "$argocd_apps" ]]; then
-        log_info "No ArgoCD applications found. Skipping application cleanup."
-        return 0
-    fi
-    
-    log_info "Found ArgoCD applications:"
-    kubectl get applications -n ${argocd_namespace} -o wide 2>/dev/null || true
-    
-    echo ""
-    log_warning "This will delete ArgoCD applications in a specific order:"
-    echo "  1. First: Applications that manage Pulumi stacks (to trigger stack deletion)"
-    echo "  2. Then: Applications that manage operators and infrastructure"
-    echo "  3. Finally: App-of-Apps applications"
-    echo ""
-    read -p "Delete ArgoCD applications? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        log_info "Skipping ArgoCD application cleanup."
-        return 0
-    fi
-    
-    # Step 1: Delete Pulumi stack applications first (to trigger proper stack deletion)
-    log_info "Step 1: Deleting Pulumi stack applications..."
-    local stack_apps
-    stack_apps=$(kubectl get applications -n ${argocd_namespace} -l app.kubernetes.io/component=application --no-headers -o custom-columns="NAME:.metadata.name" 2>/dev/null || echo "")
-    
-    if [[ -z "$stack_apps" ]]; then
-        # Try alternative approach - look for apps containing "stack" in name
-        stack_apps=$(kubectl get applications -n ${argocd_namespace} --no-headers -o custom-columns="NAME:.metadata.name" 2>/dev/null | grep -i stack || echo "")
-    fi
-    
-    if [[ -n "$stack_apps" ]]; then
-        while IFS= read -r app_name; do
-            [[ -n "$app_name" ]] || continue
-            log_info "Deleting stack application: ${app_name}"
-            kubectl delete application ${app_name} -n ${argocd_namespace} --timeout=300s 2>/dev/null || {
-                log_warning "Failed to delete application ${app_name}, continuing..."
-            }
-        done <<< "$stack_apps"
+    # Look for the app-of-apps first
+    local app_of_apps="pulumi-operator-aws"
+    if kubectl get application ${app_of_apps} -n ${argocd_namespace} &> /dev/null; then
+        log_info "Found App-of-Apps: ${app_of_apps}"
         
-        # Wait for stack applications to be removed and Pulumi stacks to be deleted
-        log_info "Waiting for Pulumi stacks to be properly deleted..."
-        local stack_wait_timeout=600  # 10 minutes
-        local stack_wait_interval=15
-        local stack_wait_elapsed=0
+        echo ""
+        log_warning "This will delete the App-of-Apps application which will:"
+        echo "  1. Trigger deletion of child applications (operator, stack)"
+        echo "  2. Automatically delete Pulumi stacks and AWS resources"
+        echo "  3. Clean up resources in the proper order (stack first, then operator)"
+        echo ""
+        read -p "Delete the App-of-Apps application? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Skipping ArgoCD application cleanup."
+            return 0
+        fi
         
-        while [[ $stack_wait_elapsed -lt $stack_wait_timeout ]]; do
-            # Check if any Pulumi stacks still exist
-            local remaining_stacks
-            remaining_stacks=$(kubectl get stacks --all-namespaces --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+        # Delete the app-of-apps - this will cascade to all child applications
+        log_info "Deleting App-of-Apps: ${app_of_apps}"
+        kubectl delete application ${app_of_apps} -n ${argocd_namespace} --timeout=600s 2>/dev/null || {
+            log_warning "Failed to delete App-of-Apps ${app_of_apps}, trying to force delete..."
+            kubectl patch application ${app_of_apps} -n ${argocd_namespace} -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            kubectl delete application ${app_of_apps} -n ${argocd_namespace} --force --grace-period=0 2>/dev/null || true
+        }
+        
+        # Wait for the app-of-apps and its children to be fully deleted
+        log_info "Waiting for App-of-Apps and child applications to be deleted..."
+        local delete_wait_timeout=900  # 15 minutes for full cleanup
+        local delete_wait_interval=30
+        local delete_wait_elapsed=0
+        
+        while [[ $delete_wait_elapsed -lt $delete_wait_timeout ]]; do
+            # Check if any applications still exist
+            local remaining_apps
+            remaining_apps=$(kubectl get applications -n ${argocd_namespace} --no-headers 2>/dev/null | wc -l || echo "0")
             
-            if [[ "$remaining_stacks" -eq 0 ]]; then
-                log_success "All Pulumi stacks have been deleted"
+            # Check for stuck Pulumi stacks that might be blocking application deletion
+            if [[ "$remaining_apps" -gt 0 ]] && [[ $delete_wait_elapsed -gt 300 ]]; then  # After 5 minutes
+                log_warning "Applications still exist after 5 minutes, checking for stuck Pulumi stacks..."
+                handle_stuck_stacks
+            fi
+            
+            if [[ "$remaining_apps" -eq 0 ]]; then
+                log_success "All ArgoCD applications have been deleted"
                 break
             fi
             
-            log_info "Waiting for ${remaining_stacks} Pulumi stacks to be deleted... (${stack_wait_elapsed}s elapsed)"
-            kubectl get stacks --all-namespaces --no-headers 2>/dev/null || true
+            log_info "Waiting for ${remaining_apps} applications to be deleted... (${delete_wait_elapsed}s elapsed)"
+            kubectl get applications -n ${argocd_namespace} --no-headers 2>/dev/null || true
             
-            sleep $stack_wait_interval
-            stack_wait_elapsed=$((stack_wait_elapsed + stack_wait_interval))
+            sleep $delete_wait_interval
+            delete_wait_elapsed=$((delete_wait_elapsed + delete_wait_interval))
         done
         
-        if [[ $stack_wait_elapsed -ge $stack_wait_timeout ]]; then
-            log_warning "Timeout waiting for Pulumi stacks to be deleted"
-            log_info "Remaining stacks:"
-            kubectl get stacks --all-namespaces 2>/dev/null || true
-            echo ""
-            read -p "Continue with remaining application cleanup anyway? (y/N): " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                log_info "Aborting ArgoCD application cleanup due to remaining stacks"
-                return 1
-            fi
+        if [[ $delete_wait_elapsed -ge $delete_wait_timeout ]]; then
+            log_warning "Timeout waiting for all applications to be deleted"
+            log_info "Remaining applications:"
+            kubectl get applications -n ${argocd_namespace} 2>/dev/null || true
+            
+            # Final attempt to handle any stuck stacks
+            log_warning "Attempting to resolve stuck stacks as final cleanup step..."
+            handle_stuck_stacks
         fi
+        
     else
-        log_info "No Pulumi stack applications found"
-    fi
-    
-    # Step 2: Delete operator and infrastructure applications
-    log_info "Step 2: Deleting operator and infrastructure applications..."
-    local operator_apps
-    operator_apps=$(kubectl get applications -n ${argocd_namespace} -l app.kubernetes.io/component=operator --no-headers -o custom-columns="NAME:.metadata.name" 2>/dev/null || echo "")
-    
-    if [[ -z "$operator_apps" ]]; then
-        # Try alternative approach - look for apps containing "operator" in name
-        operator_apps=$(kubectl get applications -n ${argocd_namespace} --no-headers -o custom-columns="NAME:.metadata.name" 2>/dev/null | grep -i operator || echo "")
-    fi
-    
-    if [[ -n "$operator_apps" ]]; then
-        while IFS= read -r app_name; do
-            [[ -n "$app_name" ]] || continue
-            log_info "Deleting operator application: ${app_name}"
-            kubectl delete application ${app_name} -n ${argocd_namespace} --timeout=180s 2>/dev/null || {
-                log_warning "Failed to delete application ${app_name}, continuing..."
-            }
-        done <<< "$operator_apps"
-    else
-        log_info "No operator applications found"
-    fi
-    
-    # Step 3: Delete app-of-apps and remaining applications
-    log_info "Step 3: Deleting remaining applications..."
-    local remaining_apps
-    remaining_apps=$(kubectl get applications -n ${argocd_namespace} --no-headers -o custom-columns="NAME:.metadata.name" 2>/dev/null || echo "")
-    
-    if [[ -n "$remaining_apps" ]]; then
+        # Fallback: check for other applications and delete them individually
+        local argocd_apps
+        argocd_apps=$(kubectl get applications -n ${argocd_namespace} --no-headers -o custom-columns="NAME:.metadata.name" 2>/dev/null || echo "")
+        
+        if [[ -z "$argocd_apps" ]]; then
+            log_info "No ArgoCD applications found. Skipping application cleanup."
+            return 0
+        fi
+        
+        log_info "App-of-Apps not found, but found other applications:"
+        kubectl get applications -n ${argocd_namespace} -o wide 2>/dev/null || true
+        
+        echo ""
+        read -p "Delete all ArgoCD applications? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Skipping ArgoCD application cleanup."
+            return 0
+        fi
+        
+        # Delete all applications
         while IFS= read -r app_name; do
             [[ -n "$app_name" ]] || continue
             log_info "Deleting application: ${app_name}"
-            kubectl delete application ${app_name} -n ${argocd_namespace} --timeout=180s 2>/dev/null || {
+            kubectl delete application ${app_name} -n ${argocd_namespace} --timeout=300s 2>/dev/null || {
                 log_warning "Failed to delete application ${app_name}, continuing..."
             }
-        done <<< "$remaining_apps"
+        done <<< "$argocd_apps"
     fi
     
     # Final verification

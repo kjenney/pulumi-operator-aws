@@ -13,7 +13,7 @@ This project demonstrates how to deploy AWS resources using the Pulumi Kubernete
 
 ## 🚀 Quick Start
 
-1. Install everything by running `./scripts/quickstart.sh`.
+1. Install everything by running `make quickstart`.
 2. Add `127.0.0.1       argocd.localhost` to your `/etc/hosts` file.
 3. Access ArgoCD at https://argocd.localhost:8443.
 
@@ -36,21 +36,9 @@ The Pulumi container image is rather large, so to speed up the loading of stack 
 
 3. **Create your Kubernetes cluster and install Pulumi Operator:**
    ```bash
-   ./scripts/setup-cluster.sh
-   ./scripts/install-operator.sh
-   ./scripts/install-argocd.sh
-   ```
-
-4. **Deploy using Helm:**
-   ```bash
-   # Basic deployment (uses .env file automatically)
-   ./scripts/deploy-stack.sh
-   
-   # Test first with dry run
-   ./scripts/deploy-stack.sh --dry-run
-   
-   # Or with custom values and different env file
-   ./scripts/deploy-stack.sh -f helm-chart/values-example.yaml --env-file .env.prod
+   make setup-cluster
+   make install-argocd
+   make deploy-app-of-apps
    ```
 
 5. **Monitor the deployment:**
