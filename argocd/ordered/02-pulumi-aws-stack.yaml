@@ -132,6 +132,15 @@ spec:
       jsonPointers:
         - /metadata/annotations/kubectl.kubernetes.io~1last-applied-configuration
     
+    # Ignore AWS credentials secret - managed externally by deployment scripts
+    - group: ""
+      kind: Secret
+      name: "aws-credentials"
+      jsonPointers:
+        - /data
+        - /metadata/annotations
+        - /metadata/labels
+    
     - group: ""
       kind: PersistentVolumeClaim
       jsonPointers:

@@ -157,42 +157,10 @@ main() {
     
     # Step 2: Optional ArgoCD installation
     echo ""
-    read -p "Do you want to install ArgoCD for GitOps? (y/N): " -n 1 -r
-    echo
-    argocd_installed=false
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        run_script "install-argocd.sh"
-        argocd_installed=true
-        
-        # Step 2.5: Deploy App of Apps after ArgoCD is installed
-        echo ""
-        read -p "Do you want to deploy the Pulumi stack via ArgoCD App of Apps? (Y/n): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            run_script "deploy-app-of-apps.sh"
-            gitops_deployed=true
-        else
-            log_info "Skipping App of Apps deployment"
-            log_info "You can deploy it later with: ./scripts/deploy-app-of-apps.sh"
-            gitops_deployed=false
-        fi
-    else
-        log_info "Skipping ArgoCD installation"
-        log_info "You can install it later with: ./scripts/install-argocd.sh"
-        gitops_deployed=false
-    fi
-    
-    # Step 3: Install operator and deploy stack (skip if using GitOps)
-    if [[ "${gitops_deployed:-false}" != true ]]; then
-        log_step "Installing Pulumi Operator and deploying stack directly"
-        run_script "install-operator.sh"
-        run_script "deploy-stack.sh"
-        traditional_deployment=true
-    else
-        log_info "Skipping direct installation - using GitOps deployment instead"
-        log_info "Monitor progress: kubectl get applications -n argocd"
-        traditional_deployment=false
-    fi
+    run_script "install-argocd.sh"
+    argocd_installed=true
+    run_script "deploy-app-of-apps.sh"
+    gitops_deployed=true
     
     # Success message
     echo ""

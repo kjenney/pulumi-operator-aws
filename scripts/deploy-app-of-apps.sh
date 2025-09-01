@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 ARGOCD_NAMESPACE="${ARGOCD_NAMESPACE:-argocd}"
-STACK_NAMESPACE="${STACK_NAMESPACE:-pulumi-aws-demo}"
+STACK_NAMESPACE="${STACK_NAMESPACE:-pulumi-aws}"
 
 # Functions
 log_info() {
@@ -52,7 +52,7 @@ load_environment() {
         
         # Update variables from environment with fallbacks
         ARGOCD_NAMESPACE="${ARGOCD_NAMESPACE:-argocd}"
-        STACK_NAMESPACE="${STACK_NAMESPACE:-pulumi-aws-demo}"
+        STACK_NAMESPACE="${STACK_NAMESPACE:-pulumi-aws}"
         
         log_info "Configuration loaded:"
         log_info "  • ArgoCD namespace: ${ARGOCD_NAMESPACE}"
@@ -102,10 +102,22 @@ setup_aws_credentials() {
         kubectl create namespace ${STACK_NAMESPACE}
     fi
     
-    # Check if AWS credentials secret already exists
+    # Check if AWS credentials secret already exists and has valid credentials
     if kubectl get secret aws-credentials -n ${STACK_NAMESPACE} &> /dev/null; then
         log_info "AWS credentials secret already exists in namespace ${STACK_NAMESPACE}"
-        return 0
+        
+        # Check if the secret has actual credential values (not empty)
+        local access_key_id
+        access_key_id=$(kubectl get secret aws-credentials -n ${STACK_NAMESPACE} -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d 2>/dev/null || echo "")
+        
+        if [[ -n "$access_key_id" ]] && [[ "$access_key_id" != "" ]]; then
+            log_success "AWS credentials secret contains valid credentials"
+            return 0
+        else
+            log_warning "AWS credentials secret exists but appears to be empty"
+            log_info "Deleting empty secret and recreating..."
+            kubectl delete secret aws-credentials -n ${STACK_NAMESPACE}
+        fi
     fi
     
     log_info "AWS credentials secret not found, creating..."

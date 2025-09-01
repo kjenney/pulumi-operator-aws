@@ -15,7 +15,7 @@ This project demonstrates how to deploy AWS resources using the Pulumi Kubernete
 
 1. Install everything by running `make quickstart`.
 2. Add `127.0.0.1       argocd.localhost` to your `/etc/hosts` file.
-3. Access ArgoCD at https://argocd.localhost:8443.
+3. Access ArgoCD at https://argocd.localhost:8443. The credentials are in `argocd-credentials.txt`.
 
 ## Optional setup
 
