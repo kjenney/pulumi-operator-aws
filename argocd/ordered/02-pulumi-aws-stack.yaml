@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/managed-by: argocd
     app.kubernetes.io/part-of: pulumi-operator-aws-suite
   annotations:
-    argocd.argoproj.io/link: "https://github.com/your-org/pulumi-operator-aws"
+    argocd.argoproj.io/link: "https://github.com/kjenney/pulumi-operator-aws"
     argocd.argoproj.io/sync-wave: "2"  # Deploy after operator
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
   finalizers:
@@ -18,7 +18,7 @@ spec:
   project: default
   
   source:
-    repoURL: https://github.com/your-org/pulumi-operator-aws.git
+    repoURL: https://github.com/kjenney/pulumi-operator-aws.git
     targetRevision: HEAD
     path: stack-chart
     
