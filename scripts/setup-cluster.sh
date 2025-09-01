@@ -220,7 +220,7 @@ main() {
     load_env_file
     
     # Set configuration variables with defaults
-    CLUSTER_NAME="${CLUSTER_NAME:-pulumi-aws-demo}"
+    CLUSTER_NAME="${CLUSTER_NAME:-pulumi-aws}"
     KIND_VERSION="${KIND_VERSION:-v0.30.0}"
     
     log_info "Using cluster name: $CLUSTER_NAME"
@@ -253,7 +253,7 @@ Options:
     -h, --help              Show this help message
 
 Environment Variables (from .env file or shell):
-    CLUSTER_NAME           Kubernetes cluster name (default: pulumi-aws-demo)
+    CLUSTER_NAME           Kubernetes cluster name (default: pulumi-aws)
     KIND_VERSION           kind version to install (default: v0.30.0)
 
 Examples:

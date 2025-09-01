@@ -2,7 +2,6 @@
 
 # quickstart.sh
 # Quick start script to set up the entire Pulumi Kubernetes Operator AWS demo
-# This script runs setup-cluster.sh, install-operator.sh, and deploy-stack.sh in sequence
 
 set -euo pipefail
 

@@ -9,9 +9,9 @@ global:
   
   # Namespace configuration
   namespace:
-    name: pulumi-aws-demo
+    name: pulumi-aws
     labels:
-      name: pulumi-aws-demo
+      name: pulumi-aws
       purpose: demo-workloads
     create: false  # Let Helm handle namespace creation with --create-namespace
 
@@ -95,12 +95,12 @@ pulumi:
 
 # Project Configuration
 project:
-  name: pulumi-aws-demo
+  name: pulumi-aws
   environment: dev
-  bucketName: pulumi-aws-demo-bucket
+  bucketName: pulumi-aws-bucket
   tags:
     Environment: dev
-    Project: pulumi-aws-demo
+    Project: pulumi-aws
     ManagedBy: pulumi-kubernetes-operator
 
 # AWS Resources Configuration
