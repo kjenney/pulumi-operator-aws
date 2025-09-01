@@ -121,14 +121,6 @@ wait_for_argocd() {
 }
 
 setup_argocd_ingress() {
-    log_info "Setting up ArgoCD ingress..."
-    
-    # Check if nginx ingress controller is available
-    if ! kubectl get pods -A | grep -q "ingress-nginx"; then
-        log_warning "Nginx ingress controller not found - skipping ingress setup"
-        return 0
-    fi
-    
     # Create ArgoCD ingress
     log_info "Creating ArgoCD ingress..."
     cat <<EOF | kubectl apply -f -
@@ -370,19 +362,8 @@ main() {
         echo "  4. Or create ArgoCD Applications via the UI"
     fi
     echo ""
-    # Check if we're on Kind for final instructions
-    local cluster_info
-    cluster_info=$(kubectl cluster-info 2>/dev/null || echo "")
-    
-    if [[ "$cluster_info" =~ "kind" ]] || command -v kind &> /dev/null && kind get clusters 2>/dev/null | grep -q .; then
-        log_info "For Kind clusters, remember to use port-forward:"
-        echo "  kubectl port-forward svc/argocd-server -n ${ARGOCD_NAMESPACE} 8080:443"
-        echo "  Then access: https://localhost:8080"
-    else
-        log_info "For non-Kind clusters, you can also use port-forward:"
-        echo "  kubectl port-forward svc/argocd-server -n ${ARGOCD_NAMESPACE} 8080:443"
-        echo "  Then access: https://localhost:8080"
-    fi
+    echo "  5. Access the ArgoCD UI at: https://argocd.localhost:8443"
+
 }
 
 # Handle script interruption
