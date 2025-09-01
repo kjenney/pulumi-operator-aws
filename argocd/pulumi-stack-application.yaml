@@ -37,7 +37,7 @@ spec:
         # Global configuration
         global:
           namespace:
-            name: pulumi-aws-demo
+            name: pulumi-aws
         
         # AWS Configuration - these will be populated by external secrets or manual setup
         aws:
@@ -102,7 +102,7 @@ spec:
   # Destination configuration
   destination:
     server: https://kubernetes.default.svc  # In-cluster deployment
-    namespace: pulumi-aws-demo  # Target namespace for the application
+    namespace: pulumi-aws  # Target namespace for the application
   
   # Sync policy
   syncPolicy:
@@ -131,7 +131,7 @@ spec:
     # Hooks for managing sync lifecycle
     managedNamespaceMetadata:
       labels:
-        name: pulumi-aws-demo
+        name: pulumi-aws
         managed-by: argocd
         environment: demo
       annotations:
@@ -167,4 +167,4 @@ spec:
     - name: "AWS Resources"
       value: "Check AWS console for created resources"
     - name: "Workspace Logs"
-      value: "kubectl logs -n pulumi-aws-demo -l pulumi.com/stack-name=aws-resources"
+      value: "kubectl logs -n pulumi-aws -l pulumi.com/stack-name=aws-resources"

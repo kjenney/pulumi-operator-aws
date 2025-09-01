@@ -31,7 +31,7 @@ spec:
       values: |
         global:
           namespace:
-            name: pulumi-aws-demo
+            name: pulumi-aws
         
         aws:
           region: us-west-2
@@ -90,7 +90,7 @@ spec:
 
   destination:
     server: https://kubernetes.default.svc
-    namespace: pulumi-aws-demo
+    namespace: pulumi-aws
   
   syncPolicy:
     automated:
@@ -114,7 +114,7 @@ spec:
     
     managedNamespaceMetadata:
       labels:
-        name: pulumi-aws-demo
+        name: pulumi-aws
         managed-by: argocd
         component: pulumi-stack
         environment: demo
@@ -155,10 +155,10 @@ spec:
     - name: "Prerequisites"
       value: "Operator must be healthy and CRDs installed"
     - name: "Stack Status"
-      value: "kubectl get stack -n pulumi-aws-demo"
+      value: "kubectl get stack -n pulumi-aws"
     - name: "Workspace Logs"
-      value: "kubectl logs -n pulumi-aws-demo -l pulumi.com/stack-name=aws-resources"
+      value: "kubectl logs -n pulumi-aws -l pulumi.com/stack-name=aws-resources"
     - name: "AWS Resources"
       value: "Check AWS console for created resources"
     - name: "Backend Storage"
-      value: "kubectl get pvc -n pulumi-aws-demo"
+      value: "kubectl get pvc -n pulumi-aws"
