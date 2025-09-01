@@ -37,9 +37,6 @@ spec:
       
       # Skip CRD installation if they're managed elsewhere
       skipCrds: false
-      
-      # Timeout for Helm operations
-      timeout: 10m
 
   # Destination configuration
   destination:

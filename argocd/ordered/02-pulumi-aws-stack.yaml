@@ -86,7 +86,6 @@ spec:
       
       parameters: []
       skipCrds: false
-      timeout: 15m  # Longer timeout for AWS resource creation
 
   destination:
     server: https://kubernetes.default.svc
