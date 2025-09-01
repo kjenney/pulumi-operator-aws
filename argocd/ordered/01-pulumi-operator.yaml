@@ -17,80 +17,13 @@ spec:
   project: default
   
   source:
-    repoURL: oci://ghcr.io/pulumi/helm-charts
-    chart: pulumi-kubernetes-operator
-    targetRevision: "2.2.0"
-    
-    helm:
-      releaseName: pulumi-kubernetes-operator
-      values: |
-        operator:
-          gracefulShutdownTimeoutDuration: 5m
-          maxConcurrentReconciles: 10
-          leaderElection:
-            enabled: true
-        
-        resources:
-          limits:
-            cpu: 500m
-            memory: 512Mi
-          requests:
-            cpu: 100m
-            memory: 128Mi
-        
-        serviceAccount:
-          create: true
-          name: ""
-          annotations: {}
-        
-        rbac:
-          create: true
-        
-        podSecurityContext:
-          runAsNonRoot: true
-          runAsUser: 65532
-          runAsGroup: 65532
-          fsGroup: 65532
-        
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-              - ALL
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
-          runAsUser: 65532
-          runAsGroup: 65532
-        
-        # Security context configuration
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-              - ALL
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
-          runAsUser: 65532
-          runAsGroup: 65532
-        
-        # Pod security context
-        podSecurityContext:
-          runAsNonRoot: true
-          runAsUser: 65532
-          runAsGroup: 65532
-          fsGroup: 65532
-        
-        # Node selector and tolerations
-        nodeSelector: {}
-        tolerations: []
-        affinity: {}
-        
-        # Replica count
-        replicaCount: 1
+    repoURL: https://github.com/pulumi/pulumi-kubernetes-operator
+    targetRevision: "v2.2.0"
+    path: deploy/quickstart
 
   destination:
     server: https://kubernetes.default.svc
-    namespace: pulumi-kubernetes-operator
+    namespace: pulumi-system
   
   syncPolicy:
     automated:
@@ -113,7 +46,7 @@ spec:
     
     managedNamespaceMetadata:
       labels:
-        name: pulumi-kubernetes-operator
+        name: pulumi-system
         managed-by: argocd
         component: operator
       annotations:
@@ -141,6 +74,6 @@ spec:
     - name: "Deployment Order"
       value: "Wave 1 - Operator deployed first"
     - name: "Health Check"
-      value: "kubectl get deployment -n pulumi-kubernetes-operator"
+      value: "kubectl get deployment -n pulumi-system"
     - name: "CRDs"
       value: "kubectl get crds | grep pulumi.com"

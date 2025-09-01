@@ -16,86 +16,17 @@ spec:
   # The project the application belongs to
   project: default
   
-  # Source configuration - Pulumi Operator Helm Chart from OCI registry
+  # Source configuration - Pulumi Operator from GitHub manifests
   source:
-    # Official Pulumi OCI Helm registry
-    repoURL: oci://ghcr.io/pulumi/helm-charts
-    chart: pulumi-kubernetes-operator
-    targetRevision: "2.2.0"  # Specify version for production use
-    
-    # Helm configuration
-    helm:
-      # Release name
-      releaseName: pulumi-kubernetes-operator
-      
-      # Override values for the operator
-      values: |
-        # Operator configuration
-        operator:
-          gracefulShutdownTimeoutDuration: 5m
-          maxConcurrentReconciles: 10
-          leaderElection:
-            enabled: true
-        
-        # Resource limits and requests
-        resources:
-          limits:
-            cpu: 500m
-            memory: 512Mi
-          requests:
-            cpu: 100m
-            memory: 128Mi
-        
-        # Service account configuration
-        serviceAccount:
-          create: true
-          name: ""
-          annotations: {}
-        
-        # RBAC configuration
-        rbac:
-          create: true
-        
-        # Pod security context
-        podSecurityContext:
-          runAsNonRoot: true
-          runAsUser: 65532
-          runAsGroup: 65532
-          fsGroup: 65532
-        
-        # Security context configuration
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-              - ALL
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
-          runAsUser: 65532
-          runAsGroup: 65532
-        
-        # Pod security context
-        podSecurityContext:
-          runAsNonRoot: true
-          runAsUser: 65532
-          runAsGroup: 65532
-          fsGroup: 65532
-        
-        # Node selector and tolerations
-        nodeSelector: {}
-        tolerations: []
-        affinity: {}
-        
-        # Replica count
-        replicaCount: 1
-      
-      # Helm parameters (alternative to values)
-      parameters: []
+    # Official Pulumi Kubernetes Operator GitHub repository
+    repoURL: https://github.com/pulumi/pulumi-kubernetes-operator
+    targetRevision: "v2.2.0"  # Use specific tag for production
+    path: deploy/quickstart
 
   # Destination configuration
   destination:
     server: https://kubernetes.default.svc  # In-cluster deployment
-    namespace: pulumi-kubernetes-operator  # Operator namespace
+    namespace: pulumi-system  # Operator namespace (matches manifest deployment)
   
   # Sync policy
   syncPolicy:
@@ -123,7 +54,7 @@ spec:
     # Hooks for managing sync lifecycle
     managedNamespaceMetadata:
       labels:
-        name: pulumi-kubernetes-operator
+        name: pulumi-system
         managed-by: argocd
         component: operator
       annotations:
@@ -154,7 +85,7 @@ spec:
   # Information for operators
   info:
     - name: "Operator Status"
-      value: "Check operator pod logs: kubectl logs -n pulumi-kubernetes-operator -l app.kubernetes.io/name=pulumi-kubernetes-operator"
+      value: "Check operator pod logs: kubectl logs -n pulumi-system -l app.kubernetes.io/name=pulumi-kubernetes-operator"
     - name: "CRDs"
       value: "kubectl get crds | grep pulumi.com"
     - name: "Webhooks"
